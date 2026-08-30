@@ -1,0 +1,3 @@
+(library
+ (public_name aho-corasick)
+ (name aho_corasick))
