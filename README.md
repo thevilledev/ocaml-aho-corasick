@@ -17,13 +17,16 @@ tagging. Pure OCaml, zero dependencies.
   semantics; drives `replace_all`
 - `mem` — early-exit "does anything match?"
 - `Stream` — chunked scanning with matches across chunk boundaries
-  (sockets, files), with absolute offsets
+  (sockets, files), with absolute offsets, in your choice of semantics:
+  every match (`feed`), non-overlapping (`feed_nonoverlapping`),
+  leftmost-longest (`Stream.Leftmost_longest`) — plus streamed
+  replacement (`Stream.Replace`)
 - `?ignore_case` — ASCII case folding
 
-Correctness is anchored by a QCheck oracle: `find_all` is compared
+Correctness is anchored by QCheck oracles: `find_all` is compared
 against a naive per-pattern scan across thousands of random
-pattern-set/input combinations, and streaming across random chunk splits
-must equal whole-input scanning.
+pattern-set/input combinations, and each streaming mode across random
+chunk splits must equal its whole-input counterpart.
 
 ## Install
 
@@ -51,10 +54,59 @@ let st, matches = Aho_corasick.Stream.feed t st chunk1 in
 let _st, more = Aho_corasick.Stream.feed t st chunk2 in
 (* matches spanning the chunk1/chunk2 boundary are found, with
    absolute offsets *)
+
+(* Redact a stream with replace_all's semantics, without concatenating:
+   input is held back only while it could still belong to a match *)
+let module R = Aho_corasick.Stream.Replace in
+let st = R.start t ~f:(fun _ -> "[REDACTED]") in
+let st, out1 = R.feed t st chunk1 in
+let st, out2 = R.feed t st chunk2 in
+let out3 = R.flush st in
+(* out1 ^ out2 ^ out3 = replace_all of the whole input *)
 ```
 
 Build the automaton once and reuse it: `t` is immutable and safe to
 share across threads.
+
+## Match semantics
+
+With patterns `["Samwise"; "Sam"]` on `"Samwise"`, three different
+answers are all reasonable, so all three are offered — over whole
+inputs and over streams:
+
+| semantics                          | reports          | whole input                             | stream                                      |
+| ---------------------------------- | ---------------- | --------------------------------------- | ------------------------------------------- |
+| overlapping (every match)          | `Sam`, `Samwise` | `find_all`, `find_iter`                 | `Stream.feed`                               |
+| non-overlapping, earliest end wins | `Sam`            | —                                       | `Stream.feed_nonoverlapping`                |
+| non-overlapping, leftmost-longest  | `Samwise`        | `find_leftmost_longest`, `replace_all`  | `Stream.Leftmost_longest`, `Stream.Replace` |
+
+The first two stream modes report a match the moment its last byte is
+seen and never buffer. Leftmost-longest inherently needs lookahead (a
+longer match may still be forming), but no match can outgrow the
+longest pattern, so `Stream.Leftmost_longest` and `Stream.Replace`
+buffer at most one longest-pattern window and are exact: fed any chunk
+split of an input, they produce precisely what their whole-input
+counterparts produce, with a final `flush` for what remains.
+
+### Relative to Rust's aho-corasick
+
+For anyone arriving from Rust's
+[aho-corasick](https://docs.rs/aho-corasick): the names do not line up
+one-to-one, and the streaming APIs differ in what they can express.
+
+- Rust's `find_iter` is non-overlapping; this library's `find_iter` is
+  the lazy form of `find_all` and reports overlapping matches (Rust's
+  `find_overlapping_iter`). For non-overlapping selection use
+  `find_leftmost_longest` (Rust's `MatchKind::LeftmostLongest`).
+- Rust's stream iterator is non-overlapping, unlike this library's
+  default: `stream_find_iter` supports only `MatchKind::Standard`, and
+  leftmost match kinds are rejected on streams. Here a stream can be
+  scanned any of the three ways: `Stream.feed` reports every
+  overlapping match (which Rust's streams cannot), `feed_nonoverlapping`
+  matches `stream_find_iter`'s semantics exactly, and
+  `Stream.Leftmost_longest` / `Stream.Replace` bring leftmost-longest —
+  and `replace_all` — to streams, which Rust's streams cannot do at
+  all.
 
 ## Notes
 
