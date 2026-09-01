@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="The exact match semantics of ocaml-aho-corasick: half-open byte offsets, which occurrences are reported, the total order they come back in, leftmost-longest selection and ASCII case folding.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Match semantics">
+    <meta property="og:description" content="Which matches are reported, at which offsets, in which order — stated precisely enough to test against.">
+    <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/semantics.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Match semantics">
+    <meta name="twitter:description" content="Which matches are reported, at which offsets, in which order — stated precisely enough to test against.">
+    <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/semantics.html">
+    <link rel="stylesheet" href="styles.css?v=20260901">
+    <title>Match semantics &mdash; ocaml-aho-corasick</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      <a href="api.html">api</a> |
+      semantics |
+      <a href="compatibility.html">compatibility</a> |
+      <a href="correctness.html">correctness</a> |
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Match semantics</h1>
+
+      <p>
+        This page is the specification. Everything stated here is a promise
+        the library keeps and the test suite exercises &mdash; including the
+        ordering rules, which are the part most libraries leave unsaid and
+        most consumers quietly depend on. Before 1.0 any of it can still
+        change, but not silently: a change to the rules below is a
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick/blob/main/CHANGES.md">CHANGES.md</a>
+        entry.
+      </p>
+
+      <p>
+        Throughout, <code>s</code> is the input, <code>|s|</code> its length in
+        bytes, and <code>s[a..b)</code> the bytes at offsets
+        <code>a</code> to <code>b</code> excluding <code>b</code>.
+      </p>
+
+      <h2 id="offsets">Offsets are half-open byte offsets</h2>
+
+      <p>
+        A <code>match_</code> is <code>{ pattern; start; stop }</code>.
+        <code>start</code> is the offset of the first matched byte;
+        <code>stop</code> is the offset one past the last matched byte. The
+        matched text is therefore <code>String.sub s m.start (m.stop -
+        m.start)</code>, the length is <code>m.stop - m.start</code>, and a
+        match at the very end of the input has <code>stop = |s|</code>.
+      </p>
+
+      <svg class="diagram diagram-mid" viewBox="0 0 340 200" role="img"
+        aria-label="A ruler over the six bytes of the word ushers, numbered 0 to 6 at the boundaries between bytes rather than on the bytes themselves. Three match spans are drawn beneath it: she from 1 to 4, he from 2 to 4, and hers from 2 to 6. Each span begins at its start boundary and ends at its stop boundary, so stop is one past the last matched byte.">
+        <text class="tick" x="50" y="18">0</text>
+        <text class="tick" x="90" y="18">1</text>
+        <text class="tick" x="130" y="18">2</text>
+        <text class="tick" x="170" y="18">3</text>
+        <text class="tick" x="210" y="18">4</text>
+        <text class="tick" x="250" y="18">5</text>
+        <text class="tick" x="290" y="18">6</text>
+        <path class="rule" d="M50 24 V34 M90 24 V34 M130 24 V34 M170 24 V34 M210 24 V34 M250 24 V34 M290 24 V34"></path>
+
+        <rect class="cell" x="50" y="38" width="40" height="34"></rect>
+        <rect class="cell" x="90" y="38" width="40" height="34"></rect>
+        <rect class="cell" x="130" y="38" width="40" height="34"></rect>
+        <rect class="cell" x="170" y="38" width="40" height="34"></rect>
+        <rect class="cell" x="210" y="38" width="40" height="34"></rect>
+        <rect class="cell" x="250" y="38" width="40" height="34"></rect>
+        <text class="lbl" x="70" y="61">u</text>
+        <text class="lbl" x="110" y="61">s</text>
+        <text class="lbl" x="150" y="61">h</text>
+        <text class="lbl" x="190" y="61">e</text>
+        <text class="lbl" x="230" y="61">r</text>
+        <text class="lbl" x="270" y="61">s</text>
+
+        <text class="lbl" x="150" y="90">she &middot; 1..4</text>
+        <path class="bar" d="M90 94 V106 M90 100 H210 M210 94 V106"></path>
+
+        <text class="lbl" x="170" y="124">he &middot; 2..4</text>
+        <path class="bar" d="M130 128 V140 M130 134 H210 M210 128 V140"></path>
+
+        <text class="lbl" x="210" y="158">hers &middot; 2..6</text>
+        <path class="bar" d="M130 162 V174 M130 168 H290 M290 162 V174"></path>
+
+        <text class="cap" x="170" y="194">stop is one past the last matched byte</text>
+      </svg>
+
+      <p class="fine">
+        The numbers sit on the boundaries between bytes, not on the bytes. This
+        is the same convention as OCaml's own <code>String.sub</code>, as Rust
+        ranges, and as the <code>Span</code> of the Rust
+        <code>aho-corasick</code> crate. It is <em>not</em> the convention of
+        every library in this space; see
+        <a href="compatibility.html#offsets">offset conventions</a>.
+      </p>
+
+      <h2 id="occurrence">What counts as an occurrence</h2>
+
+      <p>
+        For a pattern <code>p</code> at index <code>i</code>, an occurrence in
+        <code>s</code> is a pair <code>(a, b)</code> with
+        <code>b - a = |p|</code>, <code>0 &le; a</code>,
+        <code>b &le; |s|</code>, and <code>s[a..b) = p</code>. With
+        <code>~ignore_case:true</code>, that last equality is taken after
+        <a href="#folding">ASCII folding</a> of both sides.
+      </p>
+
+      <p>
+        <code>find_all</code> returns <em>exactly</em> the occurrences of every
+        pattern: never a substring that is not an occurrence, and never fewer
+        than all of them. Occurrences overlap freely, nest freely, and a
+        pattern that is a substring of another is reported alongside it.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Every occurrence, including the ones people forget</caption>
+          <thead>
+            <tr>
+              <th scope="col">Patterns</th>
+              <th scope="col">Input</th>
+              <th scope="col"><code>find_all</code></th>
+              <th scope="col">Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>["aa"]</code></td>
+              <td><code>"aaaa"</code></td>
+              <td><code>0..2</code>, <code>1..3</code>, <code>2..4</code></td>
+              <td>A pattern overlaps itself.</td>
+            </tr>
+            <tr>
+              <td><code>["a"; "ab"; "abc"]</code></td>
+              <td><code>"abca"</code></td>
+              <td><code>0..1</code>, <code>0..2</code>, <code>0..3</code>, <code>3..4</code></td>
+              <td>Nested patterns all count.</td>
+            </tr>
+            <tr>
+              <td><code>["x"; "x"]</code></td>
+              <td><code>"ax"</code></td>
+              <td><code>1..2</code> as pattern 0, <code>1..2</code> as pattern 1</td>
+              <td>Duplicates each get their index.</td>
+            </tr>
+            <tr>
+              <td><code>["he"; "she"; "his"; "hers"]</code></td>
+              <td><code>"ushers"</code></td>
+              <td><code>she</code> 1..4, <code>he</code> 2..4, <code>hers</code> 2..6</td>
+              <td>Two patterns end at offset 4.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="order">The order is total and specified</h2>
+
+      <p>
+        <code>find_all</code> returns matches sorted by:
+      </p>
+
+      <ol>
+        <li><code>stop</code>, ascending &mdash; the position at which the match was recognised;</li>
+        <li>then length <code>(stop - start)</code>, descending &mdash; longest first among matches ending together;</li>
+        <li>then <code>pattern</code>, ascending &mdash; which can only break a tie between duplicate patterns.</li>
+      </ol>
+
+      <p>
+        The three rules together are a <em>total</em> order: no two distinct
+        elements of the result compare equal, so the list is fully determined
+        by the pattern set and the input. This falls out of how the automaton
+        works &mdash; a match is emitted the moment its last byte is read, and
+        the dictionary-suffix chain walks from the longest match ending there
+        to the shortest &mdash; but it is a promise, not an accident.
+      </p>
+
+      <p>
+        <code>find_iter</code> yields the same matches in the same order, one
+        at a time. <code>Stream.feed</code> yields them in the same order too;
+        concatenating the lists from a sequence of feeds gives exactly
+        <code>find_all</code> of the concatenated input, element for element.
+      </p>
+
+      <h2 id="leftmost-longest">Leftmost-longest selection</h2>
+
+      <p>
+        <code>find_leftmost_longest</code> picks a non-overlapping subset. The
+        rule, stated as the algorithm it is:
+      </p>
+
+      <ol>
+        <li>Take all occurrences.</li>
+        <li>Order them by <code>start</code> ascending, then length descending, then pattern index ascending.</li>
+        <li>
+          Walk that order with a cursor starting at 0. Take a match if its
+          <code>start</code> is at or after the cursor, and move the cursor to
+          its <code>stop</code>; otherwise discard it.
+        </li>
+      </ol>
+
+      <p>
+        The result is non-overlapping and ordered by <code>start</code>
+        ascending. Equivalently: repeatedly take the leftmost match that
+        starts at or after the end of the previous one, preferring the longest
+        when several start together. This is the POSIX <em>leftmost-longest</em>
+        rule, the same one a POSIX regex engine applies to an alternation.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Leftmost beats longest</caption>
+          <thead>
+            <tr>
+              <th scope="col">Patterns</th>
+              <th scope="col">Input</th>
+              <th scope="col">Selected</th>
+              <th scope="col">Dropped, and why</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>["Sam"; "Samwise"]</code></td>
+              <td><code>"Samwise"</code></td>
+              <td><code>Samwise</code> 0..7</td>
+              <td><code>Sam</code> 0..3 &mdash; same start, shorter.</td>
+            </tr>
+            <tr>
+              <td><code>["ab"; "bc"]</code></td>
+              <td><code>"abc"</code></td>
+              <td><code>ab</code> 0..2</td>
+              <td><code>bc</code> 1..3 &mdash; starts later, overlaps.</td>
+            </tr>
+            <tr>
+              <td><code>["b"; "ba"]</code></td>
+              <td><code>"aba"</code></td>
+              <td><code>ba</code> 1..3</td>
+              <td><code>b</code> 1..2 &mdash; same start, shorter.</td>
+            </tr>
+            <tr>
+              <td><code>["he"; "she"; "his"; "hers"]</code></td>
+              <td><code>"ushers"</code></td>
+              <td><code>she</code> 1..4, and nothing else</td>
+              <td><code>he</code> 2..4 and <code>hers</code> 2..6 both start inside <code>she</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        That last row is worth staring at. <code>hers</code> is the longest
+        occurrence in <code>ushers</code>, and leftmost-longest does not select
+        it, because a match starting one byte earlier was taken first.
+        Leftmost is decided before longest; only among matches that start at
+        the same offset does length break the tie.
+      </p>
+
+      <h2 id="replace">Replacement</h2>
+
+      <p>
+        <code>replace_all t ~f s</code> replaces each
+        <code>find_leftmost_longest</code> match <code>m</code> with
+        <code>f m</code>, leaving the bytes between matches untouched, and
+        never rescans the replacement text. So <code>replace_all</code> with
+        <code>~f:(fun m -&gt; String.sub s m.start (m.stop - m.start))</code>
+        reproduces <code>s</code> exactly, and
+        <code>replace_all (build ["aa"]) ~f:(fun _ -&gt; "X") "aaaa"</code> is
+        <code>"XX"</code>, not <code>"XXX"</code> &mdash; the overlapping
+        occurrence at 1..3 is not selected.
+      </p>
+
+      <h2 id="mem">Membership</h2>
+
+      <p>
+        <code>mem t s</code> is <code>true</code> if and only if
+        <code>find_all t s</code> is non-empty. It stops at the first byte that
+        completes any pattern, so it is the right call when you only need a
+        yes or no.
+      </p>
+
+      <h2 id="folding">Case folding is ASCII only</h2>
+
+      <p>
+        <code>~ignore_case:true</code> maps bytes <code>0x41</code> to
+        <code>0x5A</code> (<code>A</code> to <code>Z</code>) to
+        <code>0x61</code> to <code>0x7A</code>, in the patterns at build time
+        and in the input during the scan. No other byte is touched.
+      </p>
+
+      <ul>
+        <li>
+          <code>build ~ignore_case:true ["Rust"]</code> matches
+          <code>rust</code>, <code>RUST</code> and <code>rUsT</code>.
+        </li>
+        <li>
+          It does not match <code>&Eacute;</code> against <code>&eacute;</code>,
+          or fold any byte above <code>0x7F</code>. There is no Unicode case
+          mapping here, and there is no locale.
+        </li>
+        <li>
+          Folding is length-preserving, so <code>stop - start</code> is still
+          the pattern's byte length, and offsets still index the original,
+          unfolded input.
+        </li>
+        <li>
+          <code>pattern t i</code> returns the pattern as you wrote it, not
+          the folded form.
+        </li>
+      </ul>
+
+      <h2 id="bytes">Bytes, not characters</h2>
+
+      <p>
+        Every byte value from <code>0x00</code> to <code>0xFF</code> is
+        ordinary, NUL included; patterns and inputs are arbitrary OCaml
+        <code>string</code>s and nothing is treated as a terminator. UTF-8 text
+        works as byte matching &mdash; a UTF-8 pattern finds UTF-8 occurrences
+        &mdash; but the offsets are byte offsets. Searching
+        <code>"caf&eacute; au lait"</code> for <code>"&eacute;"</code> reports
+        <code>3..5</code>, because <code>&eacute;</code> is two bytes; there is
+        no character index 3..4 anywhere in the API.
+      </p>
+
+      <p class="fine">
+        A pattern that is not valid UTF-8 will never split a character in
+        valid UTF-8 input, since UTF-8 is self-synchronising, but the library
+        does not check or rely on this. If you need character offsets, convert
+        them above this layer.
+      </p>
+
+      <h2 id="edge-cases">Edge cases</h2>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Fully specified, not accidents of implementation</caption>
+          <tbody>
+            <tr>
+              <th scope="row">Empty pattern</th>
+              <td>
+                <code>build</code> raises
+                <code>Invalid_argument "Aho_corasick.build: empty pattern"</code>.
+                An empty pattern would match at every offset, which is never
+                what a scanner wants.
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Empty pattern list</th>
+              <td>Legal. The automaton matches nothing; <code>mem</code> is always <code>false</code>.</td>
+            </tr>
+            <tr>
+              <th scope="row">Empty input</th>
+              <td>No matches. Every match needs at least one byte.</td>
+            </tr>
+            <tr>
+              <th scope="row">Duplicate patterns</th>
+              <td>Allowed. Each occurrence is reported once per duplicate index, in ascending index order.</td>
+            </tr>
+            <tr>
+              <th scope="row">Pattern longer than the input</th>
+              <td>No match, no error.</td>
+            </tr>
+            <tr>
+              <th scope="row"><code>pattern t i</code> out of bounds</th>
+              <td>Raises <code>Invalid_argument "Aho_corasick.pattern: index out of bounds"</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="streaming">Streaming</h2>
+
+      <p>
+        <code>Stream.feed t st chunk</code> reports the matches whose
+        <em>last</em> byte lies in <code>chunk</code>, with offsets counted
+        from the start of the stream rather than the start of the chunk. A
+        match that begins in one chunk and ends in a later one is reported by
+        the feed that supplies its last byte, with the correct absolute
+        <code>start</code>.
+      </p>
+
+      <p>
+        There is nothing to flush and no end-of-stream call: every match is
+        reported as soon as its final byte is seen, so a stream that is cut
+        short has still reported everything that actually matched. The
+        guarantee is an equality &mdash; for any way of splitting an input into
+        chunks, concatenating the per-feed result lists gives exactly
+        <code>find_all</code> of the whole input, in the same order.
+      </p>
+
+      <p>
+        <code>Stream</code> has no leftmost-longest counterpart, because
+        choosing the longest match at a position requires bytes that may not
+        have arrived yet. Buffer the input and use
+        <code>find_leftmost_longest</code> if you need that.
+      </p>
+
+      <h2 id="unspecified">What is deliberately not specified</h2>
+
+      <dl>
+        <dt><strong>The automaton's shape</strong></dt>
+        <dd>
+          Node numbering, the transition representation and the internal link
+          arrays are private. Only the observable matches are promised.
+        </dd>
+        <dt><strong>Physical sharing</strong></dt>
+        <dd>
+          Whether two equal <code>match_</code> values are physically equal, or
+          whether <code>pattern t i</code> returns a shared string, is not
+          promised. Compare structurally.
+        </dd>
+        <dt><strong>Timing</strong></dt>
+        <dd>
+          Nothing here is constant-time or side-channel resistant. Scan time
+          depends on the input and on how many matches it contains. Do not use
+          this to compare secrets.
+        </dd>
+      </dl>
+
+      <p>
+        Next: <a href="compatibility.html">how these rules line up with other
+        implementations</a>, or <a href="correctness.html">how they are
+        checked</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick">github.com/thevilledev/ocaml-aho-corasick</a>
+        &middot; <a href="https://ville.dev/ocaml-aho-corasick/api/">API documentation</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">issues</a>
+      </p>
+    </footer>
+  </body>
+</html>

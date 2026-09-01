@@ -15,7 +15,7 @@ tags: [
   "org:thevilledev"
 ]
 homepage: "https://github.com/thevilledev/ocaml-aho-corasick"
-doc: "https://github.com/thevilledev/ocaml-aho-corasick"
+doc: "https://ville.dev/ocaml-aho-corasick/api/"
 bug-reports: "https://github.com/thevilledev/ocaml-aho-corasick/issues"
 depends: [
   "dune" {>= "3.17"}

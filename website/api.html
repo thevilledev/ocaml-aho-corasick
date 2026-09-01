@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="The ocaml-aho-corasick API: building an automaton, the five search functions, chunked streaming with absolute offsets, and the cost of each.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="The API">
+    <meta property="og:description" content="Eight functions and a submodule: build once, search many ways, stream without concatenating.">
+    <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/api.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="The API">
+    <meta name="twitter:description" content="Eight functions and a submodule: build once, search many ways, stream without concatenating.">
+    <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/api.html">
+    <link rel="stylesheet" href="styles.css?v=20260901">
+    <title>The API &mdash; ocaml-aho-corasick</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      api |
+      <a href="semantics.html">semantics</a> |
+      <a href="compatibility.html">compatibility</a> |
+      <a href="correctness.html">correctness</a> |
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>The API</h1>
+
+      <p>
+        One module, <code>Aho_corasick</code>, with eight functions and a
+        <code>Stream</code> submodule. What each one <em>reports</em> is on the
+        <a href="semantics.html">semantics page</a>; this page is about the
+        shape of the interface and what it costs.
+      </p>
+
+      <h2 id="types">Types</h2>
+
+      <pre><code>type t
+(* A compiled automaton. Immutable and safe to share across threads. *)
+
+type match_ = {
+  pattern : int;  (* index of the pattern in the list given to build *)
+  start : int;    (* byte offset of the first matched byte *)
+  stop : int;     (* byte offset one past the last matched byte *)
+}</code></pre>
+
+      <p>
+        A <code>match_</code> carries an index rather than the matched string,
+        so a scan over a large input allocates one small record per match and
+        copies no bytes. Recover the text with <code>String.sub s m.start (m.stop -
+        m.start)</code>, or the pattern with
+        <code>Aho_corasick.pattern t m.pattern</code>.
+      </p>
+
+      <h2 id="building">Building</h2>
+
+      <pre><code>val build : ?ignore_case:bool -&gt; string list -&gt; t
+val pattern_count : t -&gt; int
+val pattern : t -&gt; int -&gt; string</code></pre>
+
+      <p>
+        Build once and keep the result. The value is immutable, so it can be a
+        module-level <code>let</code> constructed at start-up from a
+        configuration file and then shared by every request handler.
+      </p>
+
+      <pre><code>let scanner = lazy (Aho_corasick.build (load_signatures ()))</code></pre>
+
+      <p>
+        <code>build</code> raises <code>Invalid_argument</code> on an empty
+        pattern; an empty <em>list</em> is fine and yields an automaton that
+        matches nothing, which is the right thing when a signature file turns
+        out to be empty.
+      </p>
+
+      <h2 id="searching">Searching</h2>
+
+      <div class="table-scroll">
+        <table>
+          <caption>The five ways to ask</caption>
+          <thead>
+            <tr>
+              <th scope="col">Function</th>
+              <th scope="col">Returns</th>
+              <th scope="col">Use when</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>find_all t s</code></td>
+              <td><code>match_ list</code>, every occurrence</td>
+              <td>You want them all and the input fits in memory.</td>
+            </tr>
+            <tr>
+              <td><code>find_iter t s</code></td>
+              <td><code>match_ Seq.t</code>, the same, lazily</td>
+              <td>You may stop early, or want to avoid the list.</td>
+            </tr>
+            <tr>
+              <td><code>find_leftmost_longest t s</code></td>
+              <td><code>match_ list</code>, non-overlapping</td>
+              <td>You are going to cut, highlight or replace.</td>
+            </tr>
+            <tr>
+              <td><code>mem t s</code></td>
+              <td><code>bool</code></td>
+              <td>A yes or no is the whole answer.</td>
+            </tr>
+            <tr>
+              <td><code>replace_all t ~f s</code></td>
+              <td><code>string</code></td>
+              <td>Redaction, substitution, templating.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        <code>find_iter</code> is genuinely lazy: it advances the automaton
+        only as far as the consumer asks. Stopping after the first element of
+        <code>find_iter t "she........................."</code> reads three
+        bytes of the twenty-eight.
+      </p>
+
+      <pre><code>(* first match only, without scanning the rest *)
+match Aho_corasick.find_iter t input () with
+| Seq.Cons (m, _) -&gt; Some m
+| Seq.Nil -&gt; None</code></pre>
+
+      <h2 id="streaming">Streaming</h2>
+
+      <pre><code>module Stream : sig
+  type state
+  val start : t -&gt; state
+  val feed : t -&gt; state -&gt; string -&gt; state * match_ list
+  val pos : state -&gt; int
+end</code></pre>
+
+      <p>
+        <code>feed</code> takes the automaton, the position you got back last
+        time, and the next chunk. It returns the new position and the matches
+        whose last byte was in that chunk, with offsets counted from the start
+        of the stream. Nothing is buffered and nothing needs flushing at the
+        end.
+      </p>
+
+      <svg class="diagram diagram-mid" viewBox="0 0 340 210" role="img"
+        aria-label="The word ushers under a ruler numbered 0 to 6, split into two feeds: the first supplies bytes 0 to 3, the string ush, and the second supplies bytes 3 to 6, the string ers. A dashed line marks the boundary at offset 3. All three matches — she at 1 to 4, he at 2 to 4 and hers at 2 to 6 — begin in the first chunk and end in the second, so all three are reported by the second feed, with offsets counted from the start of the stream rather than the start of the chunk.">
+        <text class="tick" x="20" y="18">0</text>
+        <text class="tick" x="52" y="18">1</text>
+        <text class="tick" x="84" y="18">2</text>
+        <text class="tick" x="116" y="18">3</text>
+        <text class="tick" x="148" y="18">4</text>
+        <text class="tick" x="180" y="18">5</text>
+        <text class="tick" x="212" y="18">6</text>
+        <path class="rule" d="M20 24 V32 M52 24 V32 M84 24 V32 M116 24 V32 M148 24 V32 M180 24 V32 M212 24 V32"></path>
+
+        <rect class="cell" x="20" y="36" width="32" height="34"></rect>
+        <rect class="cell" x="52" y="36" width="32" height="34"></rect>
+        <rect class="cell" x="84" y="36" width="32" height="34"></rect>
+        <rect class="cell cell-alt" x="116" y="36" width="32" height="34"></rect>
+        <rect class="cell cell-alt" x="148" y="36" width="32" height="34"></rect>
+        <rect class="cell cell-alt" x="180" y="36" width="32" height="34"></rect>
+        <text class="lbl" x="36" y="59">u</text>
+        <text class="lbl" x="68" y="59">s</text>
+        <text class="lbl" x="100" y="59">h</text>
+        <text class="lbl" x="132" y="59">e</text>
+        <text class="lbl" x="164" y="59">r</text>
+        <text class="lbl" x="196" y="59">s</text>
+
+        <text class="cap" x="68" y="90">feed 1: ush</text>
+        <text class="cap" x="164" y="90">feed 2: ers</text>
+
+        <path class="link" d="M116 28 V176"></path>
+
+        <path class="bar" d="M52 104 V116 M52 110 H148 M148 104 V116"></path>
+        <text class="lbl start" x="224" y="114">she  1..4</text>
+
+        <path class="bar" d="M84 132 V144 M84 138 H148 M148 132 V144"></path>
+        <text class="lbl start" x="224" y="142">he   2..4</text>
+
+        <path class="bar" d="M84 160 V172 M84 166 H212 M212 160 V172"></path>
+        <text class="lbl start" x="224" y="170">hers 2..6</text>
+
+        <text class="cap" x="170" y="196">all three reported by feed 2, in stream offsets</text>
+      </svg>
+
+      <p>
+        In this split the first feed reports nothing at all &mdash; no pattern
+        has finished by the end of <code>ush</code> &mdash; and the second
+        reports all three, each with the offset it would have had in a
+        single-pass scan of <code>ushers</code>. That equality is the
+        <a href="correctness.html#oracle">property the test suite generates
+        over</a>: any chunking, concatenated, equals the whole-input result.
+      </p>
+
+      <pre><code>(* scan a channel line by line, never holding more than a line *)
+let rec pump t st ic =
+  match In_channel.input_line ic with
+  | None -&gt; Aho_corasick.Stream.pos st
+  | Some line -&gt;
+    let st, matches = Aho_corasick.Stream.feed t st (line ^ "\n") in
+    List.iter
+      (fun (m : Aho_corasick.match_) -&gt;
+        Printf.printf "%d..%d %s\n" m.start m.stop (Aho_corasick.pattern t m.pattern))
+      matches;
+    pump t st ic</code></pre>
+
+      <p>
+        <code>state</code> is immutable and tiny &mdash; a node and a byte
+        count &mdash; so one per connection costs nothing, and a socket that
+        goes away can simply have its state dropped.
+      </p>
+
+      <p>
+        <code>Stream</code> deliberately has no leftmost-longest variant:
+        choosing the longest match at a position needs bytes that have not
+        arrived. Buffer and use <code>find_leftmost_longest</code> if you need
+        that; the Rust crate refuses the same combination for the same reason.
+      </p>
+
+      <h2 id="cost">Cost</h2>
+
+      <div class="table-scroll">
+        <table>
+          <caption>With <code>n</code> the input length and <code>m</code> the number of matches</caption>
+          <thead>
+            <tr>
+              <th scope="col">Operation</th>
+              <th scope="col">Time</th>
+              <th scope="col">Allocates</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>build</code></td>
+              <td>O(total pattern length)</td>
+              <td>The automaton, once.</td>
+            </tr>
+            <tr>
+              <td><code>find_all</code></td>
+              <td>O(n + m)</td>
+              <td>The whole list.</td>
+            </tr>
+            <tr>
+              <td><code>find_iter</code></td>
+              <td>O(n + m) to exhaust</td>
+              <td>One cell per match consumed.</td>
+            </tr>
+            <tr>
+              <td><code>find_leftmost_longest</code></td>
+              <td>O(n + m log m)</td>
+              <td>All m matches, then the selection.</td>
+            </tr>
+            <tr>
+              <td><code>mem</code></td>
+              <td>O(n), stops at the first match</td>
+              <td>Nothing.</td>
+            </tr>
+            <tr>
+              <td><code>replace_all</code></td>
+              <td>O(n + m log m)</td>
+              <td>The output buffer.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed</code></td>
+              <td>O(chunk + matches in chunk)</td>
+              <td>The returned list; state is two integers.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The per-byte cost is a hash-table lookup for the transition, plus the
+        failure links the automaton has to follow when a byte does not extend
+        the current match. Those follows are bounded in total, not per byte: a
+        byte can push the automaton one node deeper, and every failure step
+        moves it strictly shallower, so a scan of <code>n</code> bytes takes at
+        most <code>n</code> failure steps overall &mdash; amortised constant
+        time per byte, whatever the pattern set.
+      </p>
+
+      <p>
+        Memory is proportional to the total length of the patterns: one
+        hash-table entry per distinct trie edge, plus a handful of arrays
+        indexed by node. Nothing scales with the input.
+      </p>
+
+      <p class="fine">
+        <code>find_leftmost_longest</code> is the one function that is not
+        streaming-friendly by construction: it materialises every overlapping
+        match before selecting between them, so on a pathological input &mdash;
+        a dictionary of short patterns against a long text &mdash;
+        <code>m</code> can be much larger than <code>n</code>. If that matters,
+        <code>find_iter</code> and your own selection loop will use less
+        memory.
+      </p>
+
+      <h2 id="concurrency">Concurrency</h2>
+
+      <p>
+        <code>t</code> is immutable after <code>build</code> returns and holds
+        no mutable state, so one automaton can be shared by any number of
+        threads or OCaml 5 domains without locking.
+        <code>Stream.state</code> is immutable too, and <code>feed</code> is a
+        function of its arguments alone &mdash; two connections scanning with
+        the same <code>t</code> cannot interfere with each other.
+      </p>
+
+      <h2 id="recipes">Recipes</h2>
+
+      <h3>Redact a dictionary of secrets from a log line</h3>
+
+      <pre><code>let scrub t line = Aho_corasick.replace_all t line ~f:(fun _ -&gt; "[REDACTED]")</code></pre>
+
+      <p>
+        Leftmost-longest is what you want here: overlapping matches would
+        replace the same bytes twice, and the longest secret wins where two
+        share a prefix.
+      </p>
+
+      <h3>Reject a request as early as possible</h3>
+
+      <pre><code>if Aho_corasick.mem signatures body then reject () else accept ()</code></pre>
+
+      <h3>Count hits per pattern</h3>
+
+      <pre><code>let counts = Array.make (Aho_corasick.pattern_count t) 0 in
+Seq.iter
+  (fun (m : Aho_corasick.match_) -&gt; counts.(m.pattern) &lt;- counts.(m.pattern) + 1)
+  (Aho_corasick.find_iter t input)</code></pre>
+
+      <p>
+        <code>find_iter</code> rather than <code>find_all</code>, so a body
+        with a million hits does not become a million-element list first.
+      </p>
+
+      <p>
+        Next: <a href="semantics.html">exactly which matches come back</a>, or
+        the <a href="https://ville.dev/ocaml-aho-corasick/api/">generated
+        odoc reference</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick">github.com/thevilledev/ocaml-aho-corasick</a>
+        &middot; <a href="https://ville.dev/ocaml-aho-corasick/api/">API documentation</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">issues</a>
+      </p>
+    </footer>
+  </body>
+</html>
