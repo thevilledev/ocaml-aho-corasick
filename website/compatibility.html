@@ -67,8 +67,8 @@
         the input <code>Samwise</code>:
       </p>
 
-      <svg class="diagram diagram-mid" viewBox="0 0 360 252" role="img"
-        aria-label="The seven bytes of the word Samwise under a ruler numbered 0 to 7, with three rows beneath showing what each match kind reports. Standard semantics, provided here as find_all, reports both Sam at 0 to 3 and Samwise at 0 to 7. Leftmost-first, which this library does not provide, reports only Sam at 0 to 3 because Sam was given first. Leftmost-longest, provided here as find_leftmost_longest, reports only Samwise at 0 to 7.">
+      <svg class="diagram diagram-mid" viewBox="0 0 360 292" role="img"
+        aria-label="The seven bytes of the word Samwise under a ruler numbered 0 to 7, with four rows beneath showing what each rule reports. Standard overlapping search reports both Sam at 0 to 3 and Samwise at 0 to 7. Standard non-overlapping search reports only Sam at 0 to 3, because it ends first. Leftmost-first, which this library does not provide, also reports Sam at 0 to 3, but only because Sam was listed first. Leftmost-longest reports only Samwise at 0 to 7.">
         <text class="tick" x="70" y="18">0</text>
         <text class="tick" x="100" y="18">1</text>
         <text class="tick" x="130" y="18">2</text>
@@ -94,19 +94,23 @@
         <text class="lbl" x="235" y="58">s</text>
         <text class="lbl" x="265" y="58">e</text>
 
-        <text class="lbl start" x="10" y="94">standard &mdash; find_all</text>
+        <text class="lbl start" x="10" y="94">standard, overlapping</text>
         <path class="bar" d="M70 102 V114 M70 108 H160 M160 102 V114"></path>
         <text class="lbl start" x="170" y="112">Sam 0..3</text>
         <path class="bar" d="M70 124 V136 M70 130 H280 M280 124 V136"></path>
-        <text class="lbl" x="175" y="148">Samwise 0..7</text>
+        <text class="lbl" x="175" y="146">Samwise 0..7</text>
 
-        <text class="lbl start" x="10" y="172">leftmost-first &mdash; not provided</text>
-        <path class="bar-off" d="M70 180 V192 M70 186 H160 M160 180 V192"></path>
+        <text class="lbl start" x="10" y="172">standard, non-overlapping</text>
+        <path class="bar" d="M70 180 V192 M70 186 H160 M160 180 V192"></path>
         <text class="lbl start" x="170" y="190">Sam 0..3</text>
 
-        <text class="lbl start" x="10" y="212">leftmost-longest &mdash; find_leftmost_longest</text>
-        <path class="bar" d="M70 220 V232 M70 226 H280 M280 220 V232"></path>
-        <text class="lbl" x="175" y="242">Samwise 0..7</text>
+        <text class="lbl start" x="10" y="212">leftmost-first &mdash; not provided</text>
+        <path class="bar-off" d="M70 220 V232 M70 226 H160 M160 220 V232"></path>
+        <text class="lbl start" x="170" y="230">Sam 0..3</text>
+
+        <text class="lbl start" x="10" y="252">leftmost-longest</text>
+        <path class="bar" d="M70 260 V272 M70 266 H280 M280 260 V272"></path>
+        <text class="lbl" x="175" y="282">Samwise 0..7</text>
       </svg>
 
       <div class="table-scroll">
@@ -121,9 +125,14 @@
           </thead>
           <tbody>
             <tr>
-              <td>Standard</td>
+              <td>Standard, overlapping</td>
               <td>Every occurrence, overlaps included.</td>
               <td><code>find_all</code>, <code>find_iter</code>, <code>Stream.feed</code></td>
+            </tr>
+            <tr>
+              <td>Standard, non-overlapping</td>
+              <td>The match that ends first wins; scanning restarts after it.</td>
+              <td><code>Stream.feed_nonoverlapping</code></td>
             </tr>
             <tr>
               <td>Leftmost-first</td>
@@ -133,18 +142,23 @@
             <tr>
               <td>Leftmost-longest</td>
               <td>Leftmost match; ties go to the longest.</td>
-              <td><code>find_leftmost_longest</code>, <code>replace_all</code></td>
+              <td>
+                <code>find_leftmost_longest</code>, <code>replace_all</code>,
+                <code>Stream.Leftmost_longest</code>, <code>Stream.Replace</code>
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <p>
-        Leftmost-first is the one to watch when porting, because it is the
-        only kind whose answer depends on the <em>order you listed the
-        patterns in</em>. Give the same two patterns as
-        <code>["Samwise"; "Sam"]</code> and a leftmost-first search reports
-        <code>Samwise</code> instead. Nothing in this library is
+        Rows two and three of the figure agree here, which is exactly why
+        leftmost-first is the one to watch when porting: it is the only kind
+        whose answer depends on the <em>order you listed the patterns in</em>.
+        Give the same two patterns as <code>["Samwise"; "Sam"]</code> and a
+        leftmost-first search flips to <code>Samwise</code>, while standard
+        non-overlapping still reports <code>Sam</code> &mdash; that pair is
+        the vector that tells the two apart. Nothing in this library is
         order-sensitive that way: pattern order affects only the
         <code>pattern</code> index in the results and the tie-break between
         duplicate patterns.
@@ -159,19 +173,26 @@
         there is no equivalent of the Perl one.
       </p>
 
-      <h3 id="standard-nonoverlapping">One trap inside "standard"</h3>
+      <h3 id="standard-nonoverlapping">Two ways to be non-overlapping</h3>
 
       <p>
         A non-overlapping search under standard semantics is not
         leftmost-longest. The Rust crate documents standard semantics as
         reporting matches "as they are seen", which means the match that ends
-        first wins, and the search resumes after it. On
-        <code>Samwise</code> that yields <code>Sam</code>, not
-        <code>Samwise</code>. So a default-configured
-        <code>AhoCorasick::find_iter</code> in Rust is <em>not</em> the
-        counterpart of <code>find_leftmost_longest</code> here, even though
-        both return a non-overlapping list. The counterpart is an automaton
-        built with <code>MatchKind::LeftmostLongest</code>.
+        first wins and the search resumes after it. On <code>Samwise</code>
+        that yields <code>Sam</code>, not <code>Samwise</code>. So a
+        default-configured <code>AhoCorasick::find_iter</code> in Rust is
+        <em>not</em> the counterpart of <code>find_leftmost_longest</code>
+        here, even though both return a non-overlapping list.
+      </p>
+
+      <p>
+        Both rules exist here, under names that say which is which:
+        <code>Stream.feed_nonoverlapping</code> is the earliest-end one and
+        <code>find_leftmost_longest</code> is the other. If your port is
+        producing a plausible but subtly different set of non-overlapping
+        matches, this is almost always the reason &mdash; see the
+        <a href="semantics.html#nonoverlapping">side-by-side</a>.
       </p>
 
       <h2 id="offsets">Offset conventions</h2>
@@ -287,9 +308,24 @@
               <td>Both stop at the first match.</td>
             </tr>
             <tr>
-              <td><code>Stream.feed</code></td>
+              <td><code>Stream.feed_nonoverlapping</code></td>
               <td><code>stream_find_iter</code>, with <code>MatchKind::Standard</code></td>
-              <td>Not identical: Rust's stream iterator is non-overlapping, this one reports overlaps.</td>
+              <td>The same rule: earliest end wins, scanning restarts after it.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed</code></td>
+              <td>&mdash;</td>
+              <td>Rust has no overlapping stream search.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest</code></td>
+              <td>&mdash;</td>
+              <td>Rust rejects leftmost kinds on streams; see below.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Replace</code></td>
+              <td><code>try_stream_replace_all_with</code>, <code>MatchKind::Standard</code> only</td>
+              <td>Rust streams replacement too, but under the earliest-end rule.</td>
             </tr>
             <tr>
               <td>&mdash;</td>
@@ -301,10 +337,25 @@
       </div>
 
       <p>
-        The two libraries also agree on a structural restriction, and for the
-        same reason: leftmost semantics need lookahead, so they cannot be
-        offered over a stream or combined with overlapping search. Rust makes
-        that a runtime error; here it is simply absent from the interface.
+        This is the one place the two deliberately diverge. Leftmost semantics
+        need lookahead, and Rust's answer is to reject the combination
+        outright: asking for overlapping or streaming matches under
+        <code>MatchKind::LeftmostFirst</code> or
+        <code>MatchKind::LeftmostLongest</code> is an error in its fallible
+        APIs and a panic in the infallible ones. This library takes the other
+        option, because the lookahead has an exact bound &mdash; no match is
+        longer than the longest pattern &mdash; so
+        <code>Stream.Leftmost_longest</code> and <code>Stream.Replace</code>
+        buffer that window and nothing more. Rust streams replacement as well
+        &mdash; <code>try_stream_replace_all_with</code> &mdash; but only
+        under standard semantics; redacting a stream with POSIX replace
+        semantics, without concatenating it first, is the thing it declines.
+      </p>
+
+      <p class="fine">
+        Both libraries still refuse leftmost semantics <em>combined with
+        overlapping search</em>, which is not a limitation so much as a
+        contradiction: a rule for discarding overlaps cannot also report them.
       </p>
 
       <h2 id="checklist">Porting checklist</h2>
@@ -348,8 +399,10 @@
           other implementation makes no promise.
         </li>
         <li>
-          <strong>Streaming.</strong> Available here for overlapping matches
-          only, with absolute offsets and nothing to flush.
+          <strong>Streaming.</strong> Available here in all three semantics,
+          with absolute offsets. The two standard modes have nothing to flush;
+          the leftmost-longest ones need a <code>flush</code> at end of input
+          and hold a match back for at most one longest-pattern length.
         </li>
       </ol>
 
@@ -371,6 +424,7 @@
               <th scope="col">Patterns</th>
               <th scope="col">Input</th>
               <th scope="col"><code>find_all</code></th>
+              <th scope="col"><code>feed_nonoverlapping</code></th>
               <th scope="col"><code>find_leftmost_longest</code></th>
             </tr>
           </thead>
@@ -380,11 +434,13 @@
               <td><code>ushers</code></td>
               <td><code>she@1..4 he@2..4 hers@2..6</code></td>
               <td><code>she@1..4</code></td>
+              <td><code>she@1..4</code></td>
             </tr>
             <tr>
               <td><code>a</code>, <code>ab</code>, <code>abc</code></td>
               <td><code>abca</code></td>
               <td><code>a@0..1 ab@0..2 abc@0..3 a@3..4</code></td>
+              <td><code>a@0..1 a@3..4</code></td>
               <td><code>abc@0..3 a@3..4</code></td>
             </tr>
             <tr>
@@ -392,17 +448,27 @@
               <td><code>aaaa</code></td>
               <td><code>aa@0..2 aa@1..3 aa@2..4</code></td>
               <td><code>aa@0..2 aa@2..4</code></td>
+              <td><code>aa@0..2 aa@2..4</code></td>
             </tr>
             <tr>
               <td><code>Sam</code>, <code>Samwise</code></td>
               <td><code>Samwise</code></td>
               <td><code>Sam@0..3 Samwise@0..7</code></td>
+              <td><code>Sam@0..3</code></td>
+              <td><code>Samwise@0..7</code></td>
+            </tr>
+            <tr>
+              <td><code>Samwise</code>, <code>Sam</code> (order flipped)</td>
+              <td><code>Samwise</code></td>
+              <td><code>Sam@0..3 Samwise@0..7</code></td>
+              <td><code>Sam@0..3</code></td>
               <td><code>Samwise@0..7</code></td>
             </tr>
             <tr>
               <td><code>b</code>, <code>ba</code></td>
               <td><code>aba</code></td>
               <td><code>b@1..2 ba@1..3</code></td>
+              <td><code>b@1..2</code></td>
               <td><code>ba@1..3</code></td>
             </tr>
             <tr>
@@ -410,29 +476,34 @@
               <td><code>abc</code></td>
               <td><code>ab@0..2 bc@1..3</code></td>
               <td><code>ab@0..2</code></td>
+              <td><code>ab@0..2</code></td>
             </tr>
             <tr>
               <td><code>x</code>, <code>x</code></td>
               <td><code>ax</code></td>
               <td><code>x#0@1..2 x#1@1..2</code></td>
               <td><code>x#0@1..2</code></td>
+              <td><code>x#0@1..2</code></td>
             </tr>
             <tr>
               <td><code>abc</code></td>
               <td><code>xxabc-abc</code></td>
               <td><code>abc@2..5 abc@6..9</code></td>
-              <td><code>abc@2..5 abc@6..9</code></td>
+              <td>same</td>
+              <td>same</td>
             </tr>
             <tr>
               <td><code>Rust</code>, case-insensitive</td>
               <td><code>rust RUST rUsT</code></td>
               <td><code>Rust@0..4 Rust@5..9 Rust@10..14</code></td>
               <td>same</td>
+              <td>same</td>
             </tr>
             <tr>
               <td><code>&eacute;</code> (2 bytes, UTF-8)</td>
               <td><code>caf&eacute; au lait</code></td>
               <td><code>&eacute;@3..5</code></td>
+              <td>same</td>
               <td>same</td>
             </tr>
           </tbody>
@@ -441,25 +512,81 @@
 
       <p>
         Each row is a decision point. Rows 1 and 3 separate overlapping from
-        non-overlapping search. Rows 1 and 4 separate leftmost-longest from
-        leftmost-first and from "first match seen". Row 7 shows whether
-        duplicate patterns survive as distinct ids
+        non-overlapping search. Rows 2, 4 and 6 separate the two
+        non-overlapping rules, which is the difference most ports get wrong.
+        Rows 4 and 5 are the same patterns in opposite orders and must give
+        the same three answers &mdash; an implementation whose output changes
+        between them is doing leftmost-first, whatever it calls itself. Row 8
+        shows whether duplicate patterns survive as distinct ids
         (<code>x#0</code> and <code>x#1</code> are the two pattern indices).
-        Row 9 checks that ASCII folding happens at all; it will not tell you
+        Row 10 checks that ASCII folding happens at all; it will not tell you
         whether the other implementation <em>also</em> folds beyond ASCII, so
         check that separately with <code>&Eacute;</code> against
-        <code>&eacute;</code>. Row 10 fails immediately on any implementation
+        <code>&eacute;</code>. Row 11 fails immediately on any implementation
         that indexes characters instead of bytes.
       </p>
 
+      <h3 id="stream-vectors">Streaming vectors</h3>
+
       <p>
-        Streaming has one vector of its own. With the single pattern
-        <code>abc</code> and the input fed as <code>"xxab"</code> then
-        <code>"c-abc"</code>, the first feed reports nothing and the second
-        reports <code>abc@2..5</code> and <code>abc@6..9</code>: absolute
-        offsets, and the boundary-crossing match found. An implementation that
-        reports offsets relative to each chunk, or that misses the first
-        match, will differ here and nowhere else.
+        Three more, one per streaming mode. Each is fed in two chunks, and
+        each isolates something a chunked implementation can get wrong:
+        offsets that reset per chunk, a match lost at a boundary, or a
+        selection decided too early.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Fed in two chunks</caption>
+          <thead>
+            <tr>
+              <th scope="col">Mode</th>
+              <th scope="col">Patterns</th>
+              <th scope="col">Chunks</th>
+              <th scope="col">Per feed, then <code>flush</code></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Stream.feed</code></td>
+              <td><code>abc</code></td>
+              <td><code>"xxab"</code>, <code>"c-abc"</code></td>
+              <td>nothing; then <code>abc@2..5 abc@6..9</code></td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed_nonoverlapping</code></td>
+              <td><code>aa</code></td>
+              <td><code>"aaa"</code>, <code>"a"</code></td>
+              <td><code>aa@0..2</code>; then <code>aa@2..4</code></td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest</code></td>
+              <td><code>b</code>, <code>ba</code></td>
+              <td><code>"ab"</code>, <code>"a"</code></td>
+              <td>nothing; then <code>ba@1..3</code>; flush is empty</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Replace</code></td>
+              <td><code>sam</code>, <code>samwise</code></td>
+              <td><code>"say samw"</code>, <code>"ise sam"</code></td>
+              <td><code>"sa"</code>; then <code>"y [X]"</code>; flush <code>" [X]"</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The first row catches offsets counted from the chunk instead of the
+        stream, and a boundary-crossing match dropped. The second catches a
+        non-overlapping scan that fails to carry its restart across a
+        boundary. The third catches a leftmost-longest stream that answers
+        too early: <code>b</code> ends inside the first chunk, and reporting
+        it there is wrong, because <code>ba</code> is still forming. The
+        fourth catches all of that in the output bytes, and one thing more
+        &mdash; an implementation that emits held-back input eagerly will
+        produce <code>"say sam"</code> before it discovers
+        <code>samwise</code>, and a redactor that does that has already leaked
+        the secret.
       </p>
 
       <h2 id="not-claimed">What is not claimed</h2>

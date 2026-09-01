@@ -76,7 +76,7 @@ let naive patterns text =
 
       <div class="table-scroll">
         <table>
-          <caption>The three properties, run on every CI run</caption>
+          <caption>The six properties, run on every CI run</caption>
           <thead>
             <tr>
               <th scope="col">Property</th>
@@ -94,9 +94,37 @@ let naive patterns text =
               <td><code>chunked streaming = whole input</code></td>
               <td class="n">500</td>
               <td>
-                Feeding the input in random chunks and concatenating the
-                results gives exactly <code>find_all</code> of the whole
-                input, as a list, in order.
+                <code>Stream.feed</code> over random chunks, concatenated,
+                equals <code>find_all</code> of the whole input as a list, in
+                order.
+              </td>
+            </tr>
+            <tr>
+              <td><code>chunked non-overlapping = greedy earliest-end</code></td>
+              <td class="n">500</td>
+              <td>
+                <code>Stream.feed_nonoverlapping</code> equals a separate
+                greedy walk over <code>find_all</code>'s ordering &mdash; the
+                rule written out, rather than the automaton's shortcut for it.
+              </td>
+            </tr>
+            <tr>
+              <td><code>chunked leftmost-longest = whole input</code></td>
+              <td class="n">500</td>
+              <td>
+                <code>Stream.Leftmost_longest</code> feeds plus
+                <code>flush</code> equal
+                <code>find_leftmost_longest</code> of the whole input.
+              </td>
+            </tr>
+            <tr>
+              <td><code>chunked replace = replace_all</code></td>
+              <td class="n">500</td>
+              <td>
+                <code>Stream.Replace</code> pieces, concatenated, equal
+                <code>replace_all</code> &mdash; with replacements that shrink,
+                grow and delete, since a length-preserving one would hide an
+                offset bug.
               </td>
             </tr>
             <tr>
@@ -110,6 +138,14 @@ let naive patterns text =
           </tbody>
         </table>
       </div>
+
+      <p>
+        The chunking generator is the interesting one: it splits each input at
+        a random list of sizes, with whatever remains becoming a final chunk,
+        so empty chunks and empty tails are exercised too. Four of the six
+        properties run through it, one per streaming mode, and each is pinned
+        to the whole-input function it claims to reproduce.
+      </p>
 
       <h3 id="generators">Why the generators look so small</h3>
 
@@ -135,7 +171,7 @@ let naive patterns text =
       <h2 id="examples">The worked examples</h2>
 
       <p>
-        Ten Alcotest cases pin down the behaviour the oracle cannot see,
+        Thirteen Alcotest cases pin down the behaviour the oracle cannot see,
         starting with the canonical pattern set from the original 1975
         paper.
       </p>
@@ -186,13 +222,25 @@ let naive patterns text =
               <td>Non-overlapping replacement, and untouched input when nothing matches.</td>
             </tr>
             <tr>
-              <td rowspan="2">streaming</td>
+              <td rowspan="5">streaming</td>
               <td><code>find_iter</code></td>
               <td>Identical to <code>find_all</code>, and lazy enough to stop early.</td>
             </tr>
             <tr>
               <td><code>chunk boundary</code></td>
               <td>A match spanning two feeds, with absolute offsets, and <code>pos</code>.</td>
+            </tr>
+            <tr>
+              <td><code>non-overlapping</code></td>
+              <td>The restart after a match, carried across a boundary, and Rust's <code>Samwise</code> case.</td>
+            </tr>
+            <tr>
+              <td><code>leftmost-longest</code></td>
+              <td>A match held back until it can be decided &mdash; and not held back when it cannot be outranked.</td>
+            </tr>
+            <tr>
+              <td><code>replace</code></td>
+              <td>The longest match winning across a chunk boundary, and pieces that concatenate to <code>replace_all</code>.</td>
             </tr>
           </tbody>
         </table>
@@ -202,9 +250,11 @@ let naive patterns text =
         The report order is the part carried entirely by these examples. The
         oracle compares match <em>sets</em> &mdash; both sides are sorted before
         comparison, because the naive scan produces matches grouped by pattern
-        rather than by offset &mdash; so a change to the ordering rules would
-        slip past all 1000 generated cases and be caught by
-        <code>ushers</code> and <code>overlapping</code> instead.
+        rather than by offset. The chunking properties compare ordered lists,
+        but against <code>find_all</code> itself, so both sides would move
+        together. A change to the ordering rules would slip past all 3500
+        generated cases and be caught by <code>ushers</code> and
+        <code>overlapping</code> instead.
       </p>
 
       <h2 id="running">Running it yourself</h2>
@@ -216,7 +266,7 @@ dune runtest</code></pre>
       <p>
         That is what CI does, on <code>ubuntu-latest</code>, against OCaml
         4.14 and 5.4, for every push to <code>main</code> and every pull
-        request. There is no separate long-running suite: the 2000 generated
+        request. There is no separate long-running suite: the 3500 generated
         cases run in the ordinary test job.
       </p>
 
@@ -246,10 +296,13 @@ dune runtest</code></pre>
           <a href="semantics.html#leftmost-longest">selection rule</a> and are
           covered by the worked examples, but they are not generated over.
         </dd>
-        <dt><strong>Ordering is not generated over</strong></dt>
+        <dt><strong>Ordering is not generated over independently</strong></dt>
         <dd>
-          As above: the oracle normalises before comparing, so ordering rests
-          on the hand-written cases alone.
+          The oracle normalises before comparing. The four chunking properties
+          <em>do</em> compare lists in order, but both sides come from this
+          implementation, so they pin streaming to <code>find_all</code>
+          rather than pinning <code>find_all</code>'s order to anything
+          outside it. That still rests on the hand-written cases.
         </dd>
         <dt><strong>No adversarial pattern sets</strong></dt>
         <dd>

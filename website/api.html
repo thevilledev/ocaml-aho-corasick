@@ -31,8 +31,9 @@
       <h1>The API</h1>
 
       <p>
-        One module, <code>Aho_corasick</code>, with eight functions and a
-        <code>Stream</code> submodule. What each one <em>reports</em> is on the
+        One module, <code>Aho_corasick</code>: eight functions over whole
+        inputs, and a <code>Stream</code> submodule offering the same searches
+        over chunks. What each one <em>reports</em> is on the
         <a href="semantics.html">semantics page</a>; this page is about the
         shape of the interface and what it costs.
       </p>
@@ -137,16 +138,69 @@ match Aho_corasick.find_iter t input () with
   type state
   val start : t -&gt; state
   val feed : t -&gt; state -&gt; string -&gt; state * match_ list
+  val feed_nonoverlapping : t -&gt; state -&gt; string -&gt; state * match_ list
   val pos : state -&gt; int
+
+  module Leftmost_longest : sig
+    type state
+    val start : t -&gt; state
+    val feed : t -&gt; state -&gt; string -&gt; state * match_ list
+    val flush : state -&gt; match_ list
+    val pos : state -&gt; int
+  end
+
+  module Replace : sig
+    type state
+    val start : t -&gt; f:(match_ -&gt; string) -&gt; state
+    val feed : t -&gt; state -&gt; string -&gt; state * string
+    val flush : state -&gt; string
+    val pos : state -&gt; int
+  end
 end</code></pre>
 
       <p>
-        <code>feed</code> takes the automaton, the position you got back last
-        time, and the next chunk. It returns the new position and the matches
-        whose last byte was in that chunk, with offsets counted from the start
-        of the stream. Nothing is buffered and nothing needs flushing at the
-        end.
+        Every one of them takes the automaton, the state you got back last
+        time, and the next chunk, and hands back a new state. Nothing is
+        mutated, offsets are absolute across the whole stream, and no chunk is
+        ever concatenated with another.
       </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Which one to feed</caption>
+          <thead>
+            <tr>
+              <th scope="col">Entry point</th>
+              <th scope="col">Streams</th>
+              <th scope="col">Needs <code>flush</code></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Stream.feed</code></td>
+              <td><code>find_all</code></td>
+              <td>no</td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed_nonoverlapping</code></td>
+              <td>the <a href="semantics.html#nonoverlapping">earliest-end rule</a>, Rust's <code>stream_find_iter</code></td>
+              <td>no</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest</code></td>
+              <td><code>find_leftmost_longest</code></td>
+              <td>yes</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Replace</code></td>
+              <td><code>replace_all</code></td>
+              <td>yes</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="stream-feed">Every match, as it completes</h3>
 
       <svg class="diagram diagram-mid" viewBox="0 0 340 210" role="img"
         aria-label="The word ushers under a ruler numbered 0 to 6, split into two feeds: the first supplies bytes 0 to 3, the string ush, and the second supplies bytes 3 to 6, the string ers. A dashed line marks the boundary at offset 3. All three matches — she at 1 to 4, he at 2 to 4 and hers at 2 to 6 — begin in the first chunk and end in the second, so all three are reported by the second feed, with offsets counted from the start of the stream rather than the start of the chunk.">
@@ -211,16 +265,61 @@ let rec pump t st ic =
     pump t st ic</code></pre>
 
       <p>
-        <code>state</code> is immutable and tiny &mdash; a node and a byte
-        count &mdash; so one per connection costs nothing, and a socket that
-        goes away can simply have its state dropped.
+        <code>Stream.feed_nonoverlapping</code> is the same call with the same
+        state type and the same zero latency, reporting a non-overlapping
+        subset instead. Pick one of the two per stream and stay with it: the
+        restart-after-match discipline only makes sense applied to the whole
+        stream.
+      </p>
+
+      <h3 id="stream-ll">Leftmost-longest, with bounded lookahead</h3>
+
+      <p>
+        <code>Stream.Leftmost_longest</code> streams the same selection
+        <code>find_leftmost_longest</code> makes. It cannot always answer
+        immediately &mdash; a longer match starting at or before a candidate
+        may still be arriving &mdash; but the wait is bounded by the longest
+        pattern, and it ends with <code>flush</code>.
+      </p>
+
+      <pre><code>module L = Aho_corasick.Stream.Leftmost_longest
+
+let st = L.start t                  (* patterns ["b"; "ba"] *)
+let st, ms1 = L.feed t st "ab"      (* [] : b at 1..2 might still grow *)
+let st, ms2 = L.feed t st "a"       (* ba 1..3 *)
+let rest = L.flush st               (* [] *)</code></pre>
+
+      <h3 id="stream-replace">Redacting a stream</h3>
+
+      <p>
+        <code>Stream.Replace</code> is <code>replace_all</code> over chunks:
+        each <code>feed</code> returns the next piece of output, holding back
+        only bytes that could still turn out to be inside a match.
+      </p>
+
+      <pre><code>module R = Aho_corasick.Stream.Replace
+
+let st = R.start t ~f:(fun _ -&gt; "[X]")   (* patterns ["sam"; "samwise"] *)
+let st, o1 = R.feed t st "say samw"      (* "sa" *)
+let st, o2 = R.feed t st "ise sam"       (* "y [X]" *)
+let o3 = R.flush st                      (* " [X]" *)
+(* o1 ^ o2 ^ o3 = "say [X] [X]" = replace_all t ~f "say samwise sam" *)</code></pre>
+
+      <p>
+        Note that <code>samwise</code> wins over <code>sam</code> across a
+        chunk boundary: the first feed emits only <code>sa</code>, because
+        everything after it could still be part of a longer match. This is
+        what makes a log redactor safe to point at a socket &mdash; the whole
+        input never has to exist at once, and no secret slips through because
+        it happened to be split in half.
       </p>
 
       <p>
-        <code>Stream</code> deliberately has no leftmost-longest variant:
-        choosing the longest match at a position needs bytes that have not
-        arrived. Buffer and use <code>find_leftmost_longest</code> if you need
-        that; the Rust crate refuses the same combination for the same reason.
+        A state is immutable and small &mdash; the plain ones hold a node and
+        a byte count; the lookahead ones additionally hold the candidates and
+        held-back bytes inside the current window &mdash; so one per
+        connection costs little, and a socket that goes away can simply have
+        its state dropped.
       </p>
 
       <h2 id="cost">Cost</h2>
@@ -270,6 +369,21 @@ let rec pump t st ic =
               <td><code>Stream.feed</code></td>
               <td>O(chunk + matches in chunk)</td>
               <td>The returned list; state is two integers.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed_nonoverlapping</code></td>
+              <td>O(chunk)</td>
+              <td>The returned list; state is two integers.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest.feed</code></td>
+              <td>O(chunk + candidates in the window)</td>
+              <td>The candidates inside one longest-pattern window.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Replace.feed</code></td>
+              <td>the same, plus the output piece</td>
+              <td>The same window, plus the bytes held back inside it.</td>
             </tr>
           </tbody>
         </table>
@@ -321,7 +435,8 @@ let rec pump t st ic =
       <p>
         Leftmost-longest is what you want here: overlapping matches would
         replace the same bytes twice, and the longest secret wins where two
-        share a prefix.
+        share a prefix. For a log stream rather than a line, reach for
+        <a href="#stream-replace"><code>Stream.Replace</code></a> instead.
       </p>
 
       <h3>Reject a request as early as possible</h3>

@@ -180,7 +180,9 @@
         <li>
           <code>find_all</code> is the standard, overlapping semantics;
           <code>find_leftmost_longest</code> is POSIX leftmost-longest. Both
-          have a named counterpart elsewhere.
+          have a named counterpart elsewhere, and both are available over a
+          stream &mdash; as is Rust's <code>stream_find_iter</code> semantics,
+          byte for byte.
         </li>
         <li>
           Report order is total and specified: by <code>stop</code> ascending,
@@ -341,8 +343,20 @@ let st, ms1 = Aho_corasick.Stream.feed t st "ush"   (* ms1 = [], nothing has fin
 let _st, ms2 = Aho_corasick.Stream.feed t st "ers"  (* she 1..4, he 2..4, hers 2..6 *)</code></pre>
 
       <p>
-        The whole surface is eight functions and a submodule; see
-        <a href="api.html">the API</a>.
+        A stream can be read in any of the three semantics, not just the
+        overlapping one, and <code>Stream.Replace</code> redacts a stream
+        without ever holding it whole:
+      </p>
+
+      <pre><code>let st = Aho_corasick.Stream.Replace.start t ~f:(fun _ -&gt; "[X]")
+let st, out1 = Aho_corasick.Stream.Replace.feed t st "say samw"  (* "sa" *)
+let st, out2 = Aho_corasick.Stream.Replace.feed t st "ise sam"   (* "y [X]" *)
+let out3 = Aho_corasick.Stream.Replace.flush st                  (* " [X]" *)
+(* out1 ^ out2 ^ out3 = replace_all t ~f "say samwise sam" *)</code></pre>
+
+      <p>
+        The whole surface is eight functions and a <code>Stream</code>
+        submodule; see <a href="api.html">the API</a>.
       </p>
 
       <h2 id="not-included">What this does not do for you</h2>
@@ -370,12 +384,13 @@ let _st, ms2 = Aho_corasick.Stream.feed t st "ers"  (* she 1..4, he 2..4, hers 2
           first &mdash; this is the difference most likely to change your
           results.
         </dd>
-        <dt><strong>Leftmost-longest over a stream</strong></dt>
+        <dt><strong>Leftmost-longest over a stream at zero latency</strong></dt>
         <dd>
-          Choosing the longest match at a position needs the bytes that follow
-          it, so <code>Stream</code> reports standard overlapping matches
-          only. The Rust crate refuses the same combination, for the same
-          reason.
+          <code>Stream.Leftmost_longest</code> exists, but choosing the
+          longest match at a position needs the bytes that follow it, so a
+          match is held back until the input reaches one longest-pattern
+          length past its start. One very long pattern therefore adds latency
+          to every match in the set.
         </dd>
         <dt><strong>Vectorised scanning</strong></dt>
         <dd>

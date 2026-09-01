@@ -373,31 +373,179 @@
         </table>
       </div>
 
+      <h2 id="nonoverlapping">Standard, non-overlapping</h2>
+
+      <p>
+        <code>Stream.feed_nonoverlapping</code> reports a non-overlapping
+        subset by a different rule from leftmost-longest, and the difference
+        is the single most common source of surprise when comparing two
+        Aho&mdash;Corasick libraries. The rule:
+      </p>
+
+      <ol>
+        <li>Scan left to right. At every offset where one or more matches end, report the longest of them.</li>
+        <li>Restart the automaton immediately after that match, so nothing overlapping it can be reported.</li>
+      </ol>
+
+      <p>
+        Equivalently: walk <code>find_all</code> in its own order &mdash; end
+        offset ascending, longest first &mdash; and greedily take every match
+        that starts at or after the end of the last one taken. The
+        <em>earliest ending</em> match wins, which is not the same as the
+        leftmost-longest one.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Where the two non-overlapping rules part company</caption>
+          <thead>
+            <tr>
+              <th scope="col">Patterns</th>
+              <th scope="col">Input</th>
+              <th scope="col"><code>feed_nonoverlapping</code></th>
+              <th scope="col"><code>find_leftmost_longest</code></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>["Sam"; "Samwise"]</code></td>
+              <td><code>"Samwise"</code></td>
+              <td><code>Sam</code> 0..3</td>
+              <td><code>Samwise</code> 0..7</td>
+            </tr>
+            <tr>
+              <td><code>["a"; "ab"; "abc"]</code></td>
+              <td><code>"abca"</code></td>
+              <td><code>a</code> 0..1, <code>a</code> 3..4</td>
+              <td><code>abc</code> 0..3, <code>a</code> 3..4</td>
+            </tr>
+            <tr>
+              <td><code>["b"; "ba"]</code></td>
+              <td><code>"aba"</code></td>
+              <td><code>b</code> 1..2</td>
+              <td><code>ba</code> 1..3</td>
+            </tr>
+            <tr>
+              <td><code>["aa"]</code></td>
+              <td><code>"aaaa"</code></td>
+              <td><code>aa</code> 0..2, <code>aa</code> 2..4</td>
+              <td><code>aa</code> 0..2, <code>aa</code> 2..4</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        These are the semantics of the Rust crate's
+        <code>stream_find_iter</code> under
+        <code>MatchKind::Standard</code>. Neither rule is more correct than
+        the other; they answer different questions. Use
+        <code>feed_nonoverlapping</code> when you want every match the moment
+        it completes and never want to wait, and leftmost-longest when you are
+        going to cut or substitute and the longest match must win.
+      </p>
+
+      <p class="fine">
+        There is no whole-input counterpart of this rule in the API. If you
+        want it over a string, feed the string as one chunk.
+      </p>
+
       <h2 id="streaming">Streaming</h2>
 
       <p>
-        <code>Stream.feed t st chunk</code> reports the matches whose
-        <em>last</em> byte lies in <code>chunk</code>, with offsets counted
-        from the start of the stream rather than the start of the chunk. A
-        match that begins in one chunk and ends in a later one is reported by
-        the feed that supplies its last byte, with the correct absolute
-        <code>start</code>.
+        All three semantics stream, and so does replacement. Every one of
+        them counts offsets from the start of the stream rather than the start
+        of the chunk, so a match that begins in one chunk and ends in a later
+        one carries the <code>start</code> it would have had in a single-pass
+        scan.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>The three streaming modes</caption>
+          <thead>
+            <tr>
+              <th scope="col">Mode</th>
+              <th scope="col">Equals, for any chunking</th>
+              <th scope="col">Latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Stream.feed</code></td>
+              <td><code>find_all</code> of the whole input, in the same order</td>
+              <td>none; nothing to flush</td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed_nonoverlapping</code></td>
+              <td>the <a href="#nonoverlapping">earliest-end rule</a> applied to the whole input</td>
+              <td>none; nothing to flush</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest</code></td>
+              <td><code>find_leftmost_longest</code> of the whole input, once <code>flush</code> has been called</td>
+              <td>bounded by the longest pattern</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Replace</code></td>
+              <td><code>replace_all</code> of the whole input, concatenating the pieces</td>
+              <td>bounded by the longest pattern</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        For the first two the guarantee is an exact equality with no
+        end-of-stream call at all: every match is reported as soon as its
+        final byte is seen, so a stream that is cut short has still reported
+        everything that actually matched. Feed any one stream exclusively with
+        <code>feed</code> or exclusively with
+        <code>feed_nonoverlapping</code> &mdash; they share a state type, but
+        the restart-after-match discipline only makes sense applied to the
+        whole stream.
+      </p>
+
+      <h3 id="stream-lookahead">Bounded lookahead</h3>
+
+      <p>
+        Leftmost-longest cannot always decide a match the moment it ends,
+        because a longer match starting at or before it may still be in
+        progress. It can always decide it eventually, and the bound is
+        exact: no match is longer than the longest pattern, so once scanning
+        has passed one longest-pattern length beyond a candidate's
+        <code>start</code>, nothing that could outrank it remains possible.
+        A match is therefore reported by the first
+        <code>Leftmost_longest.feed</code> whose input reaches that point, and
+        the state holds at most that window of candidates.
       </p>
 
       <p>
-        There is nothing to flush and no end-of-stream call: every match is
-        reported as soon as its final byte is seen, so a stream that is cut
-        short has still reported everything that actually matched. The
-        guarantee is an equality &mdash; for any way of splitting an input into
-        chunks, concatenating the per-feed result lists gives exactly
-        <code>find_all</code> of the whole input, in the same order.
+        So with <code>["b"; "ba"]</code>, the longest pattern is two bytes:
+      </p>
+
+      <pre><code>module L = Aho_corasick.Stream.Leftmost_longest
+
+let st = L.start t               (* patterns ["b"; "ba"] *)
+let st, ms1 = L.feed t st "ab"   (* [] : b at 1..2 may still grow into ba *)
+let st, ms2 = L.feed t st "a"    (* ba 1..3, now decided *)
+let rest = L.flush st            (* [] *)</code></pre>
+
+      <p>
+        Nothing is held back that does not need to be. With
+        <code>["a"]</code>, no match can ever be outranked, and
+        <code>L.feed t (L.start t) "aaa"</code> returns all three matches
+        immediately.
       </p>
 
       <p>
-        <code>Stream</code> has no leftmost-longest counterpart, because
-        choosing the longest match at a position requires bytes that may not
-        have arrived yet. Buffer the input and use
-        <code>find_leftmost_longest</code> if you need that.
+        <code>flush</code> ends the stream and returns whatever the lookahead
+        was still holding; do not feed a flushed state again.
+        <code>Stream.Replace</code> works the same way on bytes rather than
+        matches: <code>feed</code> returns the next piece of output, holding
+        back only input that could still turn out to be inside a match, and
+        the concatenation of every piece with <code>flush</code>'s equals
+        <code>replace_all</code> of the concatenated input.
       </p>
 
       <h2 id="unspecified">What is deliberately not specified</h2>
