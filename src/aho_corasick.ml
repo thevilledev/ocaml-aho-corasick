@@ -118,6 +118,18 @@ let prepend_matches t node stop acc =
   done;
   !acc
 
+(* The single match the automaton sees first ending at [stop], if any:
+   the longest one (a node's own outputs precede its dictionary-suffix
+   chain, and [dlink] points at the deepest suffix with outputs). *)
+let first_match t node stop =
+  let at n =
+    let p = t.out.(n).(0) in
+    Some { pattern = p; start = stop - t.pat_len.(p); stop }
+  in
+  if Array.length t.out.(node) > 0 then at node
+  else if t.dlink.(node) >= 0 then at t.dlink.(node)
+  else None
+
 let scan t ?(node = 0) ?(base = 0) s =
   let acc = ref [] and st = ref node in
   for i = 0 to String.length s - 1 do
@@ -194,5 +206,128 @@ module Stream = struct
     let node, matches = scan t ~node:st.node ~base:st.pos chunk in
     ({ node; pos = st.pos + String.length chunk }, matches)
 
+  let feed_nonoverlapping t st chunk =
+    let node = ref st.node and acc = ref [] in
+    for i = 0 to String.length chunk - 1 do
+      node := step t !node (byte t chunk i);
+      match first_match t !node (st.pos + i + 1) with
+      | Some m ->
+        acc := m :: !acc;
+        node := 0
+      | None -> ()
+    done;
+    ({ node = !node; pos = st.pos + String.length chunk }, List.rev !acc)
+
   let pos st = st.pos
+
+  (* Leftmost-longest cannot always decide a match the moment it ends: a
+     longer match starting at or before it may still be in progress. But
+     no match exceeds the longest pattern, so any match still unseen at
+     scan position [pos] must start after [pos - max_len]; once scanning
+     is [max_len] bytes past a candidate's start, nothing can outrank it.
+     Hence streaming selection with lookahead bounded by [max_len]. *)
+  type ll_state = {
+    ll_node : int;
+    ll_pos : int;
+    ll_done : int; (* end of the last selected match *)
+    ll_pending : match_ list; (* undecided candidates, best first *)
+    ll_max : int; (* longest pattern length *)
+  }
+
+  (* The greedy order of {!find_leftmost_longest}: smallest start, then
+     longest, then first-listed pattern. *)
+  let candidate_order a b =
+    if a.start <> b.start then compare a.start b.start
+    else if a.stop <> b.stop then compare b.stop a.stop
+    else compare a.pattern b.pattern
+
+  let ll_start t =
+    {
+      ll_node = 0;
+      ll_pos = 0;
+      ll_done = 0;
+      ll_pending = [];
+      ll_max = Array.fold_left max 0 t.pat_len;
+    }
+
+  (* Select from the sorted candidates greedily, stopping at the first
+     candidate that an unseen match (necessarily starting after
+     [limit - max_len]) could still outrank; [max_int] at end of input
+     selects everything. *)
+  let ll_select max_len limit done_ pending =
+    let rec go done_ acc = function
+      | m :: rest when m.start + max_len <= limit ->
+        let rest = List.filter (fun x -> x.start >= m.stop) rest in
+        go m.stop (m :: acc) rest
+      | rest -> (done_, List.rev acc, rest)
+    in
+    go done_ [] pending
+
+  let ll_feed t st chunk =
+    let node, ms = scan t ~node:st.ll_node ~base:st.ll_pos chunk in
+    let pos = st.ll_pos + String.length chunk in
+    let fresh = List.filter (fun m -> m.start >= st.ll_done) ms in
+    let pending = List.sort candidate_order (st.ll_pending @ fresh) in
+    let done_, selected, pending = ll_select st.ll_max pos st.ll_done pending in
+    ( { st with ll_node = node; ll_pos = pos; ll_done = done_;
+        ll_pending = pending },
+      selected )
+
+  let ll_flush st =
+    let _, selected, _ = ll_select st.ll_max max_int st.ll_done st.ll_pending in
+    selected
+
+  module Leftmost_longest = struct
+    type state = ll_state
+
+    let start = ll_start
+    let feed = ll_feed
+    let flush = ll_flush
+    let pos st = st.ll_pos
+  end
+
+  module Replace = struct
+    type state = {
+      sel : ll_state;
+      held : string; (* input bytes [from, sel.ll_pos) awaiting a verdict *)
+      from : int;
+      f : match_ -> string;
+    }
+
+    let start t ~f = { sel = ll_start t; held = ""; from = 0; f }
+
+    (* Copy [held] around the selected matches, splicing in [f m]. Bytes
+       are held back only while a pending or unseen match could still
+       cover them: everything before [pos - max_len + 1] (and before the
+       greedy frontier) is safe to emit verbatim. *)
+    let emit st held pos selected safe =
+      let buf = Buffer.create (String.length held) in
+      let from = ref st.from in
+      List.iter
+        (fun m ->
+          Buffer.add_substring buf held (!from - st.from) (m.start - !from);
+          Buffer.add_string buf (st.f m);
+          from := m.stop)
+        selected;
+      let safe = max !from safe in
+      Buffer.add_substring buf held (!from - st.from) (safe - !from);
+      (Buffer.contents buf, String.sub held (safe - st.from) (pos - safe), safe)
+
+    let feed t st chunk =
+      let sel, selected = ll_feed t st.sel chunk in
+      let held = st.held ^ chunk in
+      let safe =
+        if sel.ll_max = 0 then sel.ll_pos else sel.ll_pos - sel.ll_max + 1
+      in
+      let out, held, from = emit st held sel.ll_pos selected (max st.from safe) in
+      ({ st with sel; held; from }, out)
+
+    let flush st =
+      let out, _, _ =
+        emit st st.held st.sel.ll_pos (ll_flush st.sel) st.sel.ll_pos
+      in
+      out
+
+    let pos st = st.sel.ll_pos
+  end
 end

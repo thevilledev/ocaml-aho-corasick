@@ -122,6 +122,49 @@ let test_stream_boundary () =
   Alcotest.check matches "boundary + inner" [ m 0 2 5; m 0 6 9 ] m2;
   Alcotest.(check int) "pos" 9 (Stream.pos st)
 
+let test_stream_nonoverlapping () =
+  let t = build [ "aa" ] in
+  let st = Stream.start t in
+  let st, m1 = Stream.feed_nonoverlapping t st "aaa" in
+  Alcotest.check matches "restarts after a match" [ m 0 0 2 ] m1;
+  let _st, m2 = Stream.feed_nonoverlapping t st "a" in
+  Alcotest.check matches "across the boundary" [ m 0 2 4 ] m2;
+  (* Rust stream_find_iter (MatchKind::Standard): earliest end wins *)
+  let t2 = build [ "Samwise"; "Sam" ] in
+  let _st, ms = Stream.feed_nonoverlapping t2 (Stream.start t2) "Samwise" in
+  Alcotest.check matches "earliest-ending match" [ m 1 0 3 ] ms
+
+let test_stream_leftmost_longest () =
+  let module L = Stream.Leftmost_longest in
+  let t = build [ "b"; "ba" ] in
+  let st = L.start t in
+  let st, m1 = L.feed t st "ab" in
+  Alcotest.check matches "b held back: ba may still form" [] m1;
+  let st, m2 = L.feed t st "a" in
+  Alcotest.check matches "resolved to the longest" [ m 1 1 3 ] m2;
+  Alcotest.check matches "nothing left" [] (L.flush st);
+  (* matches that nothing can outrank are not held back *)
+  let t2 = build [ "a" ] in
+  let st2, ms = L.feed t2 (L.start t2) "aaa" in
+  Alcotest.check matches "no needless latency"
+    [ m 0 0 1; m 0 1 2; m 0 2 3 ]
+    ms;
+  Alcotest.check matches "flush empty" [] (L.flush st2)
+
+let test_stream_replace () =
+  let module R = Stream.Replace in
+  let t = build [ "sam"; "samwise" ] in
+  let f _ = "[X]" in
+  let st = R.start t ~f in
+  let st, o1 = R.feed t st "say samw" in
+  let st, o2 = R.feed t st "ise sam" in
+  let o3 = R.flush st in
+  Alcotest.(check string)
+    "streamed = whole input"
+    (replace_all t ~f "say samwise sam")
+    (o1 ^ o2 ^ o3);
+  Alcotest.(check string) "longest wins across chunks" "say [X] [X]" (o1 ^ o2 ^ o3)
+
 (* ---------- properties ---------- *)
 
 let gen_pattern = QCheck2.Gen.(string_size ~gen:(char_range 'a' 'c') (1 -- 3))
@@ -133,29 +176,79 @@ let prop_oracle =
     (fun (ps, text) ->
       norm (find_all (build ps) text) = norm (naive ps text))
 
+(* Split [text] at [sizes] (whatever remains becomes a final chunk,
+   so empty chunks and empty tails are exercised too) and feed the
+   pieces, combining the per-chunk results with [append]. *)
+let feed_chunked feed append empty st0 text sizes =
+  let n = String.length text in
+  let st = ref st0 and acc = ref empty and pos = ref 0 in
+  let go take =
+    let st', out = feed !st (String.sub text !pos take) in
+    st := st';
+    acc := append !acc out;
+    pos := !pos + take
+  in
+  List.iter (fun sz -> go (min sz (n - !pos))) sizes;
+  go (n - !pos);
+  (!st, !acc)
+
+let gen_chunked =
+  QCheck2.Gen.(
+    triple
+      (list_size (1 -- 4) gen_pattern)
+      (gen_text 80)
+      (list_size (0 -- 6) (0 -- 30)))
+
 let prop_stream =
   QCheck2.Test.make ~name:"chunked streaming = whole input" ~count:500
-    QCheck2.Gen.(
-      triple
-        (list_size (1 -- 4) gen_pattern)
-        (gen_text 80)
-        (list_size (0 -- 6) (0 -- 30)))
-    (fun (ps, text, sizes) ->
+    gen_chunked (fun (ps, text, sizes) ->
       let t = build ps in
-      let n = String.length text in
-      let st = ref (Stream.start t) in
-      let acc = ref [] in
-      let pos = ref 0 in
-      List.iter
-        (fun sz ->
-          let take = min sz (n - !pos) in
-          let st', ms = Stream.feed t !st (String.sub text !pos take) in
-          st := st';
-          acc := !acc @ ms;
-          pos := !pos + take)
-        sizes;
-      let _, ms = Stream.feed t !st (String.sub text !pos (n - !pos)) in
-      !acc @ ms = find_all t text)
+      let _, ms =
+        feed_chunked (Stream.feed t) ( @ ) [] (Stream.start t) text sizes
+      in
+      ms = find_all t text)
+
+(* Reference for [Stream.feed_nonoverlapping]: greedy earliest-end over
+   find_all's ordering (end offset ascending; longest first per end). *)
+let nonoverlapping_reference t text =
+  let rec go last acc = function
+    | [] -> List.rev acc
+    | mt :: rest ->
+      if mt.start >= last then go mt.stop (mt :: acc) rest
+      else go last acc rest
+  in
+  go 0 [] (find_all t text)
+
+let prop_stream_nonoverlapping =
+  QCheck2.Test.make ~name:"chunked non-overlapping = greedy earliest-end"
+    ~count:500 gen_chunked (fun (ps, text, sizes) ->
+      let t = build ps in
+      let _, ms =
+        feed_chunked
+          (Stream.feed_nonoverlapping t)
+          ( @ ) [] (Stream.start t) text sizes
+      in
+      ms = nonoverlapping_reference t text)
+
+let prop_stream_leftmost_longest =
+  QCheck2.Test.make ~name:"chunked leftmost-longest = whole input" ~count:500
+    gen_chunked (fun (ps, text, sizes) ->
+      let t = build ps in
+      let module L = Stream.Leftmost_longest in
+      let st, ms = feed_chunked (L.feed t) ( @ ) [] (L.start t) text sizes in
+      ms @ L.flush st = find_leftmost_longest t text)
+
+let prop_stream_replace =
+  QCheck2.Test.make ~name:"chunked replace = replace_all" ~count:500
+    gen_chunked (fun (ps, text, sizes) ->
+      let t = build ps in
+      (* shrinking, growing and deleting replacements *)
+      let f mt =
+        if mt.pattern mod 2 = 0 then "" else Printf.sprintf "<%d>" mt.pattern
+      in
+      let module R = Stream.Replace in
+      let st, out = feed_chunked (R.feed t) ( ^ ) "" (R.start t ~f) text sizes in
+      out ^ R.flush st = replace_all t ~f text)
 
 let prop_leftmost_longest_sound =
   QCheck2.Test.make ~name:"leftmost-longest is non-overlapping and maximal"
@@ -194,8 +287,19 @@ let () =
         [
           Alcotest.test_case "find_iter" `Quick test_find_iter;
           Alcotest.test_case "chunk boundary" `Quick test_stream_boundary;
+          Alcotest.test_case "non-overlapping" `Quick test_stream_nonoverlapping;
+          Alcotest.test_case "leftmost-longest" `Quick
+            test_stream_leftmost_longest;
+          Alcotest.test_case "replace" `Quick test_stream_replace;
         ] );
       ( "properties",
         List.map QCheck_alcotest.to_alcotest
-          [ prop_oracle; prop_stream; prop_leftmost_longest_sound ] );
+          [
+            prop_oracle;
+            prop_stream;
+            prop_stream_nonoverlapping;
+            prop_stream_leftmost_longest;
+            prop_stream_replace;
+            prop_leftmost_longest_sound;
+          ] );
     ]
