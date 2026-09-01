@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="ocaml-aho-corasick finds every occurrence of many patterns in one pass. Byte-exact match semantics, written down and checked against an independent oracle, and aligned with the Rust aho-corasick crate."
+    >
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="ocaml-aho-corasick">
+    <meta
+      property="og:description"
+      content="Many patterns, one pass. Aho-Corasick for OCaml, with its match semantics specified byte for byte."
+    >
+    <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="ocaml-aho-corasick">
+    <meta name="twitter:description" content="Many patterns, one pass. Aho-Corasick for OCaml, with its match semantics specified byte for byte.">
+    <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/">
+    <link rel="stylesheet" href="styles.css?v=20260901">
+    <title>ocaml-aho-corasick: multi-pattern string matching for OCaml</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ overview |
+      <a href="api.html">api</a> |
+      <a href="semantics.html">semantics</a> |
+      <a href="compatibility.html">compatibility</a> |
+      <a href="correctness.html">correctness</a> |
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
+    </nav>
+
+    <main id="content">
+      <svg class="diagram diagram-wide" viewBox="0 0 640 240" role="img"
+        aria-label="A pattern set — he, she, his, hers — is compiled once into an automaton built from a trie plus failure links. The input, here the six bytes of the word ushers, is scanned in a single left-to-right pass, and the automaton reports three matches with byte offsets: she at 1 to 4, he at 2 to 4, and hers at 2 to 6. The cost is proportional to the input length plus the number of matches, independent of how many patterns there are.">
+        <defs>
+          <marker id="tip-w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0.5 L10 5 L0 9.5 Z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <text class="lbl" x="96" y="20">patterns</text>
+        <rect class="box" x="16" y="28" width="160" height="84"></rect>
+        <text class="lbl" x="96" y="60">he she his hers</text>
+        <text class="cap" x="96" y="84">four, or forty thousand</text>
+
+        <path class="flow" d="M176 70 H224" marker-end="url(#tip-w)"></path>
+        <text class="lbl" x="200" y="58">build</text>
+
+        <text class="lbl" x="320" y="20">automaton</text>
+        <rect class="box box-alt" x="228" y="28" width="184" height="84"></rect>
+        <text class="lbl" x="320" y="60">trie + failure links</text>
+        <text class="cap" x="320" y="84">built once, then reused</text>
+
+        <path class="flow" d="M412 70 H460" marker-end="url(#tip-w)"></path>
+        <text class="lbl" x="436" y="58">scan</text>
+
+        <text class="lbl" x="544" y="20">matches</text>
+        <rect class="box" x="464" y="28" width="160" height="84"></rect>
+        <text class="lbl start" x="486" y="52">she  1..4</text>
+        <text class="lbl start" x="486" y="74">he   2..4</text>
+        <text class="lbl start" x="486" y="96">hers 2..6</text>
+
+        <path class="flow" d="M320 164 V116" marker-end="url(#tip-w)"></path>
+        <text class="lbl start" x="332" y="144">one pass</text>
+
+        <rect class="cell" x="242" y="168" width="26" height="28"></rect>
+        <rect class="cell" x="268" y="168" width="26" height="28"></rect>
+        <rect class="cell" x="294" y="168" width="26" height="28"></rect>
+        <rect class="cell" x="320" y="168" width="26" height="28"></rect>
+        <rect class="cell" x="346" y="168" width="26" height="28"></rect>
+        <rect class="cell" x="372" y="168" width="26" height="28"></rect>
+        <text class="lbl" x="255" y="187">u</text>
+        <text class="lbl" x="281" y="187">s</text>
+        <text class="lbl" x="307" y="187">h</text>
+        <text class="lbl" x="333" y="187">e</text>
+        <text class="lbl" x="359" y="187">r</text>
+        <text class="lbl" x="385" y="187">s</text>
+
+        <path class="rule" d="M242 196 V201 M268 196 V201 M294 196 V201 M320 196 V201 M346 196 V201 M372 196 V201 M398 196 V201"></path>
+        <text class="tick" x="242" y="213">0</text>
+        <text class="tick" x="268" y="213">1</text>
+        <text class="tick" x="294" y="213">2</text>
+        <text class="tick" x="320" y="213">3</text>
+        <text class="tick" x="346" y="213">4</text>
+        <text class="tick" x="372" y="213">5</text>
+        <text class="tick" x="398" y="213">6</text>
+
+        <text class="cap" x="320" y="232">O(input + matches), whatever the pattern count</text>
+      </svg>
+
+      <svg class="diagram diagram-tall" viewBox="0 0 300 414" role="img"
+        aria-label="A pattern set — he, she, his, hers — is compiled once into an automaton built from a trie plus failure links. The input, here the six bytes of the word ushers, is scanned in a single left-to-right pass, and the automaton reports three matches with byte offsets: she at 1 to 4, he at 2 to 4, and hers at 2 to 6. The cost is proportional to the input length plus the number of matches, independent of how many patterns there are.">
+        <defs>
+          <marker id="tip-t" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0.5 L10 5 L0 9.5 Z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <text class="lbl start" x="30" y="22">patterns</text>
+        <rect class="box" x="30" y="28" width="240" height="56"></rect>
+        <text class="lbl" x="150" y="52">he she his hers</text>
+        <text class="cap" x="150" y="74">four, or forty thousand</text>
+
+        <path class="flow" d="M150 84 V110" marker-end="url(#tip-t)"></path>
+        <text class="lbl start" x="162" y="102">build</text>
+
+        <rect class="box box-alt" x="30" y="114" width="240" height="60"></rect>
+        <text class="lbl" x="150" y="138">automaton</text>
+        <text class="cap" x="150" y="160">trie + failure links</text>
+
+        <path class="flow" d="M150 174 V200" marker-end="url(#tip-t)"></path>
+        <text class="lbl start" x="162" y="192">scan</text>
+
+        <rect class="cell" x="54" y="204" width="32" height="30"></rect>
+        <rect class="cell" x="86" y="204" width="32" height="30"></rect>
+        <rect class="cell" x="118" y="204" width="32" height="30"></rect>
+        <rect class="cell" x="150" y="204" width="32" height="30"></rect>
+        <rect class="cell" x="182" y="204" width="32" height="30"></rect>
+        <rect class="cell" x="214" y="204" width="32" height="30"></rect>
+        <text class="lbl" x="70" y="225">u</text>
+        <text class="lbl" x="102" y="225">s</text>
+        <text class="lbl" x="134" y="225">h</text>
+        <text class="lbl" x="166" y="225">e</text>
+        <text class="lbl" x="198" y="225">r</text>
+        <text class="lbl" x="230" y="225">s</text>
+
+        <path class="rule" d="M54 234 V239 M86 234 V239 M118 234 V239 M150 234 V239 M182 234 V239 M214 234 V239 M246 234 V239"></path>
+        <text class="tick" x="54" y="251">0</text>
+        <text class="tick" x="86" y="251">1</text>
+        <text class="tick" x="118" y="251">2</text>
+        <text class="tick" x="150" y="251">3</text>
+        <text class="tick" x="182" y="251">4</text>
+        <text class="tick" x="214" y="251">5</text>
+        <text class="tick" x="246" y="251">6</text>
+
+        <text class="cap" x="150" y="270">one left-to-right pass</text>
+        <path class="flow" d="M150 278 V304" marker-end="url(#tip-t)"></path>
+
+        <text class="lbl start" x="30" y="320">matches</text>
+        <rect class="box" x="30" y="326" width="240" height="80"></rect>
+        <text class="lbl start" x="86" y="352">she  1..4</text>
+        <text class="lbl start" x="86" y="374">he   2..4</text>
+        <text class="lbl start" x="86" y="396">hers 2..6</text>
+      </svg>
+
+      <h1>ocaml-aho-corasick</h1>
+
+      <p>
+        Search for many patterns at once, in a single left-to-right pass over
+        the input, in time proportional to the input length plus the number of
+        matches &mdash; and independent of how many patterns you are looking
+        for. This is
+        <a href="https://dl.acm.org/doi/10.1145/360825.360855">Aho and
+        Corasick's 1975 algorithm</a>, the workhorse behind secret scanners,
+        WAF and IDS signature matching, log filtering and dictionary tagging.
+        Pure OCaml, no dependencies.
+      </p>
+
+      <p>
+        There is one algorithm here and no protocol, so the only thing worth
+        promising is exactness. Every rule about which matches are reported,
+        in what order, and at which byte offsets is
+        <a href="semantics.html">written down as a specification</a>, checked
+        on every CI run against an independent naive implementation, and
+        <a href="compatibility.html">lined up against what other
+        Aho&ndash;Corasick libraries do</a> so that porting a scanner to or
+        from OCaml is a mechanical exercise rather than a guess.
+      </p>
+
+      <ul>
+        <li>
+          Match spans are half-open byte offsets, <code>start</code> inclusive
+          and <code>stop</code> exclusive &mdash; the same convention as the
+          Rust <code>aho-corasick</code> crate's <code>Span</code>.
+        </li>
+        <li>
+          <code>find_all</code> is the standard, overlapping semantics;
+          <code>find_leftmost_longest</code> is POSIX leftmost-longest. Both
+          have a named counterpart elsewhere.
+        </li>
+        <li>
+          Report order is total and specified: by <code>stop</code> ascending,
+          then longest first, then by pattern index.
+        </li>
+        <li>
+          A QCheck oracle compares <code>find_all</code> against a naive
+          per-pattern scan over 1000 random pattern-set and input pairs, and
+          chunked streaming against whole-input scanning over 500 more.
+        </li>
+      </ul>
+
+      <div class="notice">
+        <p>
+          <strong>Pre-1.0, and not yet cross-tested against other
+          implementations.</strong> The semantics below are specified and
+          checked against an in-repository oracle; no differential harness
+          runs this library against the Rust or Python ones. The
+          <a href="compatibility.html#vectors">conformance vectors</a> are
+          published so you can run that comparison yourself.
+        </p>
+      </div>
+
+      <table>
+        <caption>Current state</caption>
+        <tbody>
+          <tr><th scope="row">Release</th><td>0.1.0 (unreleased)</td></tr>
+          <tr><th scope="row">OCaml</th><td>4.14 or newer</td></tr>
+          <tr><th scope="row">Runtime dependencies</th><td>none</td></tr>
+          <tr><th scope="row">Alphabet</th><td>bytes, 0 to 255</td></tr>
+          <tr><th scope="row">Modules</th><td><code>Aho_corasick</code>, and <code>Aho_corasick.Stream</code></td></tr>
+          <tr><th scope="row">License</th><td>MIT</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="how-it-works">How it finds them all at once</h2>
+
+      <p>
+        The patterns are compiled into a trie: one node per distinct prefix,
+        one edge per byte. Scanning would be easy if the input always followed
+        a single branch, but it does not, so each node also carries a
+        <em>failure link</em> to the node for the longest proper suffix of its
+        prefix that is still a prefix of some pattern. When a byte does not
+        continue the current branch, the automaton follows failure links
+        instead of backing up in the input &mdash; which is why the input is
+        read exactly once and never re-examined.
+      </p>
+
+      <svg class="diagram diagram-mid" viewBox="0 0 350 312" role="img"
+        aria-label="The trie for the patterns he, she, his and hers. From the root, one branch reads s then h then e, and the other reads h then either e, r, s or i, s. Four nodes are marked as reporting a pattern: he, she, his and hers. A dashed failure link runs from the she node to the he node, because he is the longest proper suffix of she that is also a pattern prefix; it is what makes the automaton report he immediately after reporting she.">
+        <defs>
+          <marker id="tip-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0.5 L10 5 L0 9.5 Z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <path class="flow" d="M170 34 L90 96 M170 34 L250 96 M90 96 V158 M250 96 L196 158 M250 96 L296 158 M90 158 V220 M196 158 V220 M296 158 V220 M196 220 V282"></path>
+
+        <circle class="node" cx="170" cy="34" r="13"></circle>
+        <circle class="node" cx="90" cy="96" r="13"></circle>
+        <circle class="node" cx="250" cy="96" r="13"></circle>
+        <circle class="node" cx="90" cy="158" r="13"></circle>
+        <circle class="node" cx="196" cy="158" r="13"></circle>
+        <circle class="node" cx="296" cy="158" r="13"></circle>
+        <circle class="node" cx="90" cy="220" r="13"></circle>
+        <circle class="node" cx="196" cy="220" r="13"></circle>
+        <circle class="node" cx="296" cy="220" r="13"></circle>
+        <circle class="node" cx="196" cy="282" r="13"></circle>
+
+        <circle class="node-out" cx="196" cy="158" r="9.5"></circle>
+        <circle class="node-out" cx="90" cy="220" r="9.5"></circle>
+        <circle class="node-out" cx="296" cy="220" r="9.5"></circle>
+        <circle class="node-out" cx="196" cy="282" r="9.5"></circle>
+
+        <text class="lbl" x="90" y="101">s</text>
+        <text class="lbl" x="250" y="101">h</text>
+        <text class="lbl" x="90" y="163">h</text>
+        <text class="lbl" x="196" y="163">e</text>
+        <text class="lbl" x="296" y="163">i</text>
+        <text class="lbl" x="90" y="225">e</text>
+        <text class="lbl" x="196" y="225">r</text>
+        <text class="lbl" x="296" y="225">s</text>
+        <text class="lbl" x="196" y="287">s</text>
+
+        <text class="cap" x="170" y="18">root</text>
+        <text class="cap start" x="215" y="148">he</text>
+        <text class="cap end" x="70" y="224">she</text>
+        <text class="cap start" x="313" y="224">his</text>
+        <text class="cap start" x="213" y="286">hers</text>
+
+        <path class="link" d="M101 213 L182 166" marker-end="url(#tip-f)"></path>
+        <text class="cap" x="143" y="228">failure link</text>
+
+        <text class="cap" x="175" y="308">a ringed node reports a pattern</text>
+      </svg>
+
+      <p>
+        The one failure link drawn above is the interesting one. After the
+        automaton reads <code>s</code>, <code>h</code>, <code>e</code> it is at
+        the node for <code>she</code> and reports it; its failure link points
+        at <code>he</code>, which is itself a pattern, so <code>he</code> is
+        reported at the same input position. That chain of failure links
+        through nodes that carry patterns &mdash; the dictionary-suffix chain
+        &mdash; is what makes nested and overlapping matches come out for free.
+        Every other failure link in this trie leads back to the root or to the
+        single-byte nodes <code>h</code> and <code>s</code>.
+      </p>
+
+      <p>
+        Scanning <code>ushers</code> with this automaton produces exactly the
+        three matches in the figure at the top of the page:
+        <code>she</code> at 1..4, then <code>he</code> at 2..4 reported at the
+        same input position, then <code>hers</code> at 2..6.
+      </p>
+
+      <h2 id="install">Install</h2>
+
+      <pre><code>opam install aho-corasick   # once released
+opam pin add aho-corasick https://github.com/thevilledev/ocaml-aho-corasick.git</code></pre>
+
+      <p>
+        Nothing else is needed: the library is pure OCaml with an empty
+        dependency list, and the test suite is the only thing that pulls in
+        Alcotest and QCheck.
+      </p>
+
+      <h2 id="quick-start">Quick start</h2>
+
+      <p>
+        Build the automaton once, then reuse it. The value is immutable and
+        safe to share across threads and domains.
+      </p>
+
+      <pre><code>let t = Aho_corasick.build [ "he"; "she"; "his"; "hers" ] in
+
+Aho_corasick.find_all t "ushers"
+(* [{pattern = 1; start = 1; stop = 4};   she
+    {pattern = 0; start = 2; stop = 4};   he
+    {pattern = 3; start = 2; stop = 6}]   hers *)</code></pre>
+
+      <p>
+        Non-overlapping selection and replacement use leftmost-longest, the
+        semantics POSIX tools apply when they substitute:
+      </p>
+
+      <pre><code>let t = Aho_corasick.build [ "cat"; "dog" ] in
+Aho_corasick.replace_all t "cat and dog" ~f:(fun m -&gt; Printf.sprintf "[%d]" m.pattern)
+(* "[0] and [1]" *)</code></pre>
+
+      <p>
+        Input arriving in chunks is scanned without concatenating it, and
+        matches that straddle a chunk boundary are still found, with offsets
+        counted from the start of the stream:
+      </p>
+
+      <pre><code>let st = Aho_corasick.Stream.start t
+let st, ms1 = Aho_corasick.Stream.feed t st "ush"   (* ms1 = [], nothing has finished *)
+let _st, ms2 = Aho_corasick.Stream.feed t st "ers"  (* she 1..4, he 2..4, hers 2..6 *)</code></pre>
+
+      <p>
+        The whole surface is eight functions and a submodule; see
+        <a href="api.html">the API</a>.
+      </p>
+
+      <h2 id="not-included">What this does not do for you</h2>
+
+      <dl>
+        <dt><strong>Regular expressions</strong></dt>
+        <dd>
+          Patterns are literal byte strings. No character classes, anchors,
+          alternation or wildcards. If you need those, you need a regex
+          engine, possibly with this as its literal prefilter.
+        </dd>
+        <dt><strong>Unicode</strong></dt>
+        <dd>
+          Matching is over bytes, and offsets are byte offsets. UTF-8 works,
+          in that a UTF-8 pattern matches UTF-8 text, but
+          <code>?ignore_case</code> folds only ASCII <code>A</code> to
+          <code>Z</code>, and there is no normalisation or grapheme
+          awareness.
+        </dd>
+        <dt><strong>Leftmost-first semantics</strong></dt>
+        <dd>
+          There is no mode where the pattern given first wins over a longer
+          one. If you are porting from something that behaves that way, read
+          <a href="compatibility.html#kinds">the semantics comparison</a>
+          first &mdash; this is the difference most likely to change your
+          results.
+        </dd>
+        <dt><strong>Leftmost-longest over a stream</strong></dt>
+        <dd>
+          Choosing the longest match at a position needs the bytes that follow
+          it, so <code>Stream</code> reports standard overlapping matches
+          only. The Rust crate refuses the same combination, for the same
+          reason.
+        </dd>
+        <dt><strong>Vectorised scanning</strong></dt>
+        <dd>
+          The inner loop is a plain hash-table transition per byte. There is
+          no SIMD prefilter and no dense transition table; this is a correct,
+          small, dependency-free implementation, not a race with Hyperscan.
+        </dd>
+      </dl>
+
+      <p>
+        Next: <a href="semantics.html">the match semantics in full</a>, or
+        <a href="compatibility.html">how they line up with other
+        implementations</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick">github.com/thevilledev/ocaml-aho-corasick</a>
+        &middot; <a href="https://ville.dev/ocaml-aho-corasick/api/">API documentation</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">issues</a>
+      </p>
+    </footer>
+  </body>
+</html>

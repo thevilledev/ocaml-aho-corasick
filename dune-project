@@ -8,7 +8,7 @@
 (license MIT)
 (authors "Ville Vesilehto <ville@vesilehto.fi>")
 (maintainers "Ville Vesilehto <ville@vesilehto.fi>")
-(documentation "https://github.com/thevilledev/ocaml-aho-corasick")
+(documentation "https://ville.dev/ocaml-aho-corasick/api/")
 
 (package
  (name aho-corasick)

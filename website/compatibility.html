@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="How ocaml-aho-corasick lines up with other Aho-Corasick implementations: match kinds, offset conventions, a function mapping to the Rust aho-corasick crate, a porting checklist and conformance vectors.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Compatibility">
+    <meta property="og:description" content="Match kinds, offset conventions and conformance vectors for porting a scanner to or from OCaml.">
+    <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/compatibility.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Compatibility">
+    <meta name="twitter:description" content="Match kinds, offset conventions and conformance vectors for porting a scanner to or from OCaml.">
+    <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/compatibility.html">
+    <link rel="stylesheet" href="styles.css?v=20260901">
+    <title>Compatibility &mdash; ocaml-aho-corasick</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      <a href="api.html">api</a> |
+      <a href="semantics.html">semantics</a> |
+      compatibility |
+      <a href="correctness.html">correctness</a> |
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Compatibility</h1>
+
+      <p>
+        Aho&ndash;Corasick is one algorithm, but "the matches" is not one
+        answer. Libraries differ on whether overlapping matches are reported,
+        on how a non-overlapping subset is chosen, on whether an end offset is
+        inclusive or exclusive, and on whether offsets count bytes or
+        characters. A scanner ported between two of them without checking
+        these will run, produce plausible output, and be wrong.
+      </p>
+
+      <p>
+        This page states where this library sits on each axis, so that
+        agreement or disagreement with another implementation is a fact you
+        can look up rather than discover in production.
+      </p>
+
+      <div class="notice">
+        <p>
+          <strong>What "compatible" means here.</strong> The
+          <a href="semantics.html">semantics</a> are specified and checked
+          against an independent oracle in CI. They are <em>not</em> checked
+          against another Aho&ndash;Corasick library by any automated harness.
+          Where this page says two implementations agree, that is a reading of
+          their documented behaviour, not a test result &mdash; which is why
+          the <a href="#vectors">conformance vectors</a> below exist.
+        </p>
+      </div>
+
+      <h2 id="kinds">The three match kinds</h2>
+
+      <p>
+        The clearest vocabulary for these comes from the Rust
+        <a href="https://docs.rs/aho-corasick"><code>aho-corasick</code></a>
+        crate, whose <code>MatchKind</code> names three behaviours. Take the
+        patterns <code>Sam</code> and <code>Samwise</code>, in that order, and
+        the input <code>Samwise</code>:
+      </p>
+
+      <svg class="diagram diagram-mid" viewBox="0 0 360 252" role="img"
+        aria-label="The seven bytes of the word Samwise under a ruler numbered 0 to 7, with three rows beneath showing what each match kind reports. Standard semantics, provided here as find_all, reports both Sam at 0 to 3 and Samwise at 0 to 7. Leftmost-first, which this library does not provide, reports only Sam at 0 to 3 because Sam was given first. Leftmost-longest, provided here as find_leftmost_longest, reports only Samwise at 0 to 7.">
+        <text class="tick" x="70" y="18">0</text>
+        <text class="tick" x="100" y="18">1</text>
+        <text class="tick" x="130" y="18">2</text>
+        <text class="tick" x="160" y="18">3</text>
+        <text class="tick" x="190" y="18">4</text>
+        <text class="tick" x="220" y="18">5</text>
+        <text class="tick" x="250" y="18">6</text>
+        <text class="tick" x="280" y="18">7</text>
+        <path class="rule" d="M70 24 V32 M100 24 V32 M130 24 V32 M160 24 V32 M190 24 V32 M220 24 V32 M250 24 V32 M280 24 V32"></path>
+
+        <rect class="cell" x="70" y="36" width="30" height="32"></rect>
+        <rect class="cell" x="100" y="36" width="30" height="32"></rect>
+        <rect class="cell" x="130" y="36" width="30" height="32"></rect>
+        <rect class="cell" x="160" y="36" width="30" height="32"></rect>
+        <rect class="cell" x="190" y="36" width="30" height="32"></rect>
+        <rect class="cell" x="220" y="36" width="30" height="32"></rect>
+        <rect class="cell" x="250" y="36" width="30" height="32"></rect>
+        <text class="lbl" x="85" y="58">S</text>
+        <text class="lbl" x="115" y="58">a</text>
+        <text class="lbl" x="145" y="58">m</text>
+        <text class="lbl" x="175" y="58">w</text>
+        <text class="lbl" x="205" y="58">i</text>
+        <text class="lbl" x="235" y="58">s</text>
+        <text class="lbl" x="265" y="58">e</text>
+
+        <text class="lbl start" x="10" y="94">standard &mdash; find_all</text>
+        <path class="bar" d="M70 102 V114 M70 108 H160 M160 102 V114"></path>
+        <text class="lbl start" x="170" y="112">Sam 0..3</text>
+        <path class="bar" d="M70 124 V136 M70 130 H280 M280 124 V136"></path>
+        <text class="lbl" x="175" y="148">Samwise 0..7</text>
+
+        <text class="lbl start" x="10" y="172">leftmost-first &mdash; not provided</text>
+        <path class="bar-off" d="M70 180 V192 M70 186 H160 M160 180 V192"></path>
+        <text class="lbl start" x="170" y="190">Sam 0..3</text>
+
+        <text class="lbl start" x="10" y="212">leftmost-longest &mdash; find_leftmost_longest</text>
+        <path class="bar" d="M70 220 V232 M70 226 H280 M280 220 V232"></path>
+        <text class="lbl" x="175" y="242">Samwise 0..7</text>
+      </svg>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Where this library sits</caption>
+          <thead>
+            <tr>
+              <th scope="col">Kind</th>
+              <th scope="col">Rule</th>
+              <th scope="col">Here</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Standard</td>
+              <td>Every occurrence, overlaps included.</td>
+              <td><code>find_all</code>, <code>find_iter</code>, <code>Stream.feed</code></td>
+            </tr>
+            <tr>
+              <td>Leftmost-first</td>
+              <td>Leftmost match; ties go to the pattern given earlier.</td>
+              <td>not provided</td>
+            </tr>
+            <tr>
+              <td>Leftmost-longest</td>
+              <td>Leftmost match; ties go to the longest.</td>
+              <td><code>find_leftmost_longest</code>, <code>replace_all</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Leftmost-first is the one to watch when porting, because it is the
+        only kind whose answer depends on the <em>order you listed the
+        patterns in</em>. Give the same two patterns as
+        <code>["Samwise"; "Sam"]</code> and a leftmost-first search reports
+        <code>Samwise</code> instead. Nothing in this library is
+        order-sensitive that way: pattern order affects only the
+        <code>pattern</code> index in the results and the tie-break between
+        duplicate patterns.
+      </p>
+
+      <p>
+        The three kinds correspond to how regex engines resolve
+        <code>Sam|Samwise</code>: a Perl-style engine takes the first
+        alternative that matches, a POSIX engine takes the longest. If you are
+        replacing a regex alternation of literals with this library,
+        <code>find_leftmost_longest</code> matches the POSIX behaviour and
+        there is no equivalent of the Perl one.
+      </p>
+
+      <h3 id="standard-nonoverlapping">One trap inside "standard"</h3>
+
+      <p>
+        A non-overlapping search under standard semantics is not
+        leftmost-longest. The Rust crate documents standard semantics as
+        reporting matches "as they are seen", which means the match that ends
+        first wins, and the search resumes after it. On
+        <code>Samwise</code> that yields <code>Sam</code>, not
+        <code>Samwise</code>. So a default-configured
+        <code>AhoCorasick::find_iter</code> in Rust is <em>not</em> the
+        counterpart of <code>find_leftmost_longest</code> here, even though
+        both return a non-overlapping list. The counterpart is an automaton
+        built with <code>MatchKind::LeftmostLongest</code>.
+      </p>
+
+      <h2 id="offsets">Offset conventions</h2>
+
+      <p>
+        The second thing that silently changes results. This library reports
+        <code>{ start; stop }</code> as a half-open byte range: <code>stop</code>
+        is one past the last matched byte, so the length is
+        <code>stop - start</code>.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>What a match carries, and how to convert</caption>
+          <thead>
+            <tr>
+              <th scope="col">Implementation</th>
+              <th scope="col">Reports</th>
+              <th scope="col">To get this library's <code>start</code>/<code>stop</code></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>ocaml-aho-corasick</td>
+              <td><code>{ pattern; start; stop }</code>, bytes, half-open</td>
+              <td>&mdash;</td>
+            </tr>
+            <tr>
+              <td>Rust <code>aho-corasick</code></td>
+              <td>
+                <code>Match</code> over a <code>Span</code>, documented as
+                "the starting offset is inclusive while the ending offset is
+                exclusive"
+              </td>
+              <td>identical: <code>start()</code>, <code>end()</code></td>
+            </tr>
+            <tr>
+              <td>Python <code>pyahocorasick</code></td>
+              <td>
+                <code>iter()</code> yields <code>(end_index, value)</code>
+                where the end index is <em>inclusive</em> &mdash; its own
+                documentation computes the start as
+                <code>end_index - len(value) + 1</code>
+              </td>
+              <td><code>start = end_index - len + 1</code>, <code>stop = end_index + 1</code></td>
+            </tr>
+            <tr>
+              <td>Hyperscan</td>
+              <td>
+                the match callback receives an end offset; the start offset is
+                supplied only for patterns compiled with
+                <code>HS_FLAG_SOM_LEFTMOST</code>
+              </td>
+              <td>check the engine's own convention before converting</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="fine">
+        An off-by-one here is invisible in unit tests that only ask "did it
+        match" and catastrophic in a redactor, which will leave the last byte
+        of every secret on the page. The <a href="#vectors">vectors</a> below
+        catch it on the first row.
+      </p>
+
+      <h2 id="mapping">Mapping to the Rust crate</h2>
+
+      <p>
+        The Rust crate is the most complete implementation in general
+        circulation, so it makes the most useful reference point.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Nearest counterpart, given a matching <code>MatchKind</code></caption>
+          <thead>
+            <tr>
+              <th scope="col">Here</th>
+              <th scope="col">Rust <code>aho-corasick</code></th>
+              <th scope="col">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>build patterns</code></td>
+              <td><code>AhoCorasick::new</code></td>
+              <td>Both take patterns in order; the index is the pattern id.</td>
+            </tr>
+            <tr>
+              <td><code>build ~ignore_case:true</code></td>
+              <td><code>ascii_case_insensitive(true)</code></td>
+              <td>Both fold ASCII only.</td>
+            </tr>
+            <tr>
+              <td><code>find_all</code>, <code>find_iter</code></td>
+              <td><code>find_overlapping_iter</code>, with <code>MatchKind::Standard</code></td>
+              <td>Report order is specified here; sort if you depend on it there.</td>
+            </tr>
+            <tr>
+              <td><code>find_leftmost_longest</code></td>
+              <td><code>find_iter</code>, with <code>MatchKind::LeftmostLongest</code></td>
+              <td>Not the default kind &mdash; you must ask for it.</td>
+            </tr>
+            <tr>
+              <td><code>replace_all</code></td>
+              <td><code>replace_all</code>, with <code>MatchKind::LeftmostLongest</code></td>
+              <td>Same selection; Rust takes a replacement per pattern, not a closure.</td>
+            </tr>
+            <tr>
+              <td><code>mem</code></td>
+              <td><code>is_match</code></td>
+              <td>Both stop at the first match.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed</code></td>
+              <td><code>stream_find_iter</code>, with <code>MatchKind::Standard</code></td>
+              <td>Not identical: Rust's stream iterator is non-overlapping, this one reports overlaps.</td>
+            </tr>
+            <tr>
+              <td>&mdash;</td>
+              <td><code>MatchKind::LeftmostFirst</code></td>
+              <td>No counterpart here.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The two libraries also agree on a structural restriction, and for the
+        same reason: leftmost semantics need lookahead, so they cannot be
+        offered over a stream or combined with overlapping search. Rust makes
+        that a runtime error; here it is simply absent from the interface.
+      </p>
+
+      <h2 id="checklist">Porting checklist</h2>
+
+      <p>
+        Run down this list when moving a pattern set between implementations.
+        Each line is a real behavioural difference, not a style preference.
+      </p>
+
+      <ol>
+        <li>
+          <strong>End offset.</strong> Exclusive here. Inclusive in
+          <code>pyahocorasick</code>. Convert, do not assume.
+        </li>
+        <li>
+          <strong>Bytes or characters.</strong> Offsets here count bytes. An
+          implementation that indexes characters will disagree on any input
+          with a multi-byte character before the match.
+        </li>
+        <li>
+          <strong>Which kind.</strong> Overlapping, leftmost-first or
+          leftmost-longest. Pick deliberately; the default differs by library.
+        </li>
+        <li>
+          <strong>Pattern order.</strong> Irrelevant here, decisive under
+          leftmost-first.
+        </li>
+        <li>
+          <strong>Duplicate patterns.</strong> Reported once per index here.
+          An implementation backed by a set or dictionary may collapse them,
+          losing one of your ids.
+        </li>
+        <li>
+          <strong>Case folding.</strong> ASCII <code>A</code> to
+          <code>Z</code> only. Anything advertising "case-insensitive" over
+          Unicode will match strictly more.
+        </li>
+        <li>
+          <strong>Report order.</strong> Specified here as end offset, then
+          longest, then pattern index. Sort both sides before comparing if the
+          other implementation makes no promise.
+        </li>
+        <li>
+          <strong>Streaming.</strong> Available here for overlapping matches
+          only, with absolute offsets and nothing to flush.
+        </li>
+      </ol>
+
+      <h2 id="vectors">Conformance vectors</h2>
+
+      <p>
+        These are the answers this library gives. They are small on purpose:
+        each one isolates a decision that implementations differ on, so a
+        disagreement points straight at the cause. Offsets are half-open byte
+        offsets, and <code>name@a..b</code> means the pattern
+        <code>name</code> matched <code>s[a..b)</code>.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Byte-exact expected output</caption>
+          <thead>
+            <tr>
+              <th scope="col">Patterns</th>
+              <th scope="col">Input</th>
+              <th scope="col"><code>find_all</code></th>
+              <th scope="col"><code>find_leftmost_longest</code></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>he</code>, <code>she</code>, <code>his</code>, <code>hers</code></td>
+              <td><code>ushers</code></td>
+              <td><code>she@1..4 he@2..4 hers@2..6</code></td>
+              <td><code>she@1..4</code></td>
+            </tr>
+            <tr>
+              <td><code>a</code>, <code>ab</code>, <code>abc</code></td>
+              <td><code>abca</code></td>
+              <td><code>a@0..1 ab@0..2 abc@0..3 a@3..4</code></td>
+              <td><code>abc@0..3 a@3..4</code></td>
+            </tr>
+            <tr>
+              <td><code>aa</code></td>
+              <td><code>aaaa</code></td>
+              <td><code>aa@0..2 aa@1..3 aa@2..4</code></td>
+              <td><code>aa@0..2 aa@2..4</code></td>
+            </tr>
+            <tr>
+              <td><code>Sam</code>, <code>Samwise</code></td>
+              <td><code>Samwise</code></td>
+              <td><code>Sam@0..3 Samwise@0..7</code></td>
+              <td><code>Samwise@0..7</code></td>
+            </tr>
+            <tr>
+              <td><code>b</code>, <code>ba</code></td>
+              <td><code>aba</code></td>
+              <td><code>b@1..2 ba@1..3</code></td>
+              <td><code>ba@1..3</code></td>
+            </tr>
+            <tr>
+              <td><code>ab</code>, <code>bc</code></td>
+              <td><code>abc</code></td>
+              <td><code>ab@0..2 bc@1..3</code></td>
+              <td><code>ab@0..2</code></td>
+            </tr>
+            <tr>
+              <td><code>x</code>, <code>x</code></td>
+              <td><code>ax</code></td>
+              <td><code>x#0@1..2 x#1@1..2</code></td>
+              <td><code>x#0@1..2</code></td>
+            </tr>
+            <tr>
+              <td><code>abc</code></td>
+              <td><code>xxabc-abc</code></td>
+              <td><code>abc@2..5 abc@6..9</code></td>
+              <td><code>abc@2..5 abc@6..9</code></td>
+            </tr>
+            <tr>
+              <td><code>Rust</code>, case-insensitive</td>
+              <td><code>rust RUST rUsT</code></td>
+              <td><code>Rust@0..4 Rust@5..9 Rust@10..14</code></td>
+              <td>same</td>
+            </tr>
+            <tr>
+              <td><code>&eacute;</code> (2 bytes, UTF-8)</td>
+              <td><code>caf&eacute; au lait</code></td>
+              <td><code>&eacute;@3..5</code></td>
+              <td>same</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Each row is a decision point. Rows 1 and 3 separate overlapping from
+        non-overlapping search. Rows 1 and 4 separate leftmost-longest from
+        leftmost-first and from "first match seen". Row 7 shows whether
+        duplicate patterns survive as distinct ids
+        (<code>x#0</code> and <code>x#1</code> are the two pattern indices).
+        Row 9 checks that ASCII folding happens at all; it will not tell you
+        whether the other implementation <em>also</em> folds beyond ASCII, so
+        check that separately with <code>&Eacute;</code> against
+        <code>&eacute;</code>. Row 10 fails immediately on any implementation
+        that indexes characters instead of bytes.
+      </p>
+
+      <p>
+        Streaming has one vector of its own. With the single pattern
+        <code>abc</code> and the input fed as <code>"xxab"</code> then
+        <code>"c-abc"</code>, the first feed reports nothing and the second
+        reports <code>abc@2..5</code> and <code>abc@6..9</code>: absolute
+        offsets, and the boundary-crossing match found. An implementation that
+        reports offsets relative to each chunk, or that misses the first
+        match, will differ here and nowhere else.
+      </p>
+
+      <h2 id="not-claimed">What is not claimed</h2>
+
+      <p>
+        No differential test runs this library against the Rust or Python
+        implementations. The table above is a careful reading of their
+        documentation, checked against the behaviour those documents specify;
+        it is not a CI job, and either side may have bugs the other does not.
+        Treating agreement as established would be exactly the kind of
+        unverified claim this page exists to avoid.
+      </p>
+
+      <p>
+        If you do run the vectors against another implementation and find a
+        disagreement,
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">open
+        an issue</a> with the pattern set, the input and both outputs. A
+        disagreement is either a bug here or a difference worth documenting on
+        this page.
+      </p>
+
+      <p>
+        Next: <a href="correctness.html">how the semantics are checked</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick">github.com/thevilledev/ocaml-aho-corasick</a>
+        &middot; <a href="https://ville.dev/ocaml-aho-corasick/api/">API documentation</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">issues</a>
+      </p>
+    </footer>
+  </body>
+</html>

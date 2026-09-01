@@ -28,6 +28,14 @@ against a naive per-pattern scan across thousands of random
 pattern-set/input combinations, and each streaming mode across random
 chunk splits must equal its whole-input counterpart.
 
+## Documentation
+
+Match semantics, how they line up with other Aho-Corasick implementations,
+and how correctness is checked:
+[ville.dev/ocaml-aho-corasick](https://ville.dev/ocaml-aho-corasick/).
+The generated API reference lives at
+[ville.dev/ocaml-aho-corasick/api](https://ville.dev/ocaml-aho-corasick/api/).
+
 ## Install
 
 ```sh

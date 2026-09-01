@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="How ocaml-aho-corasick is checked: a QCheck oracle against a naive per-pattern scan, a streaming equivalence property, worked examples, and an honest account of what none of it covers.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Correctness">
+    <meta property="og:description" content="The oracle, the properties, the worked examples — and what they do not cover.">
+    <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/correctness.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Correctness">
+    <meta name="twitter:description" content="The oracle, the properties, the worked examples — and what they do not cover.">
+    <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/correctness.html">
+    <link rel="stylesheet" href="styles.css?v=20260901">
+    <title>Correctness &mdash; ocaml-aho-corasick</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      <a href="api.html">api</a> |
+      <a href="semantics.html">semantics</a> |
+      <a href="compatibility.html">compatibility</a> |
+      correctness |
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Correctness</h1>
+
+      <p>
+        An Aho&ndash;Corasick automaton is easy to get almost right. A missing
+        dictionary-suffix link loses nested matches and nothing else; a
+        failure link computed from the wrong node loses matches only when two
+        patterns share a particular suffix; an off-by-one in the offset
+        arithmetic is invisible until someone redacts a secret and leaves its
+        last byte behind. All three survive a test suite of hand-written
+        examples, because hand-written examples test the cases the author
+        already thought of.
+      </p>
+
+      <p>
+        So the primary check here is not an example. It is an oracle: a second,
+        obviously-correct implementation, and a generator that keeps proposing
+        inputs on which the two must agree.
+      </p>
+
+      <h2 id="oracle">The oracle</h2>
+
+      <p>
+        The reference implementation is a naive per-pattern scan &mdash; for
+        each pattern, try it at every offset. It is quadratic and useless in
+        production, which is precisely why it is trustworthy: there is no
+        automaton, no failure link and no shared state to get wrong.
+      </p>
+
+      <pre><code>(* test/test_aho_corasick.ml *)
+let naive patterns text =
+  List.concat
+    (List.mapi
+       (fun pi p -&gt;
+         let lp = String.length p and n = String.length text in
+         let acc = ref [] in
+         for i = 0 to n - lp do
+           if String.sub text i lp = p then acc := m pi i (i + lp) :: !acc
+         done;
+         List.rev !acc)
+       patterns)</code></pre>
+
+      <p>
+        QCheck then generates pattern sets and inputs and asserts that
+        <code>find_all</code> and <code>naive</code> return the same matches.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>The three properties, run on every CI run</caption>
+          <thead>
+            <tr>
+              <th scope="col">Property</th>
+              <th scope="col" class="n">Cases</th>
+              <th scope="col">Asserts</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>find_all = naive scan</code></td>
+              <td class="n">1000</td>
+              <td>The same set of matches as the reference implementation.</td>
+            </tr>
+            <tr>
+              <td><code>chunked streaming = whole input</code></td>
+              <td class="n">500</td>
+              <td>
+                Feeding the input in random chunks and concatenating the
+                results gives exactly <code>find_all</code> of the whole
+                input, as a list, in order.
+              </td>
+            </tr>
+            <tr>
+              <td><code>leftmost-longest selection</code></td>
+              <td class="n">500</td>
+              <td>
+                The selection is ordered and non-overlapping, and every
+                selected match is a real match.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="generators">Why the generators look so small</h3>
+
+      <p>
+        Patterns are 1 to 3 bytes drawn from <code>{a, b, c}</code>, there are
+        1 to 5 of them, and inputs are up to 60 bytes from the same three
+        letters. That looks like weak testing and is the opposite of it. A
+        three-letter alphabet with short patterns maximises the density of the
+        things that break Aho&ndash;Corasick implementations: patterns that are
+        suffixes of other patterns, patterns that overlap themselves, several
+        patterns ending at the same offset, and constant traffic down the
+        failure links. Over a realistic alphabet, a random 60-byte input would
+        contain almost no matches at all, and a thousand such cases would test
+        nothing.
+      </p>
+
+      <p>
+        When a property does fail, QCheck shrinks the counterexample before
+        reporting it, so what lands in the CI log is a minimal pattern set and
+        input rather than the 60-byte case that happened to trip it.
+      </p>
+
+      <h2 id="examples">The worked examples</h2>
+
+      <p>
+        Ten Alcotest cases pin down the behaviour the oracle cannot see,
+        starting with the canonical pattern set from the original 1975
+        paper.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>What each example is for</caption>
+          <thead>
+            <tr>
+              <th scope="col">Group</th>
+              <th scope="col">Case</th>
+              <th scope="col">Pins down</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td rowspan="6">classic</td>
+              <td><code>ushers</code></td>
+              <td>The canonical pattern set, and the exact report order.</td>
+            </tr>
+            <tr>
+              <td><code>overlapping</code></td>
+              <td>Self-overlap, and nesting at a single end offset.</td>
+            </tr>
+            <tr>
+              <td><code>duplicate patterns</code></td>
+              <td>Both indices reported, ascending.</td>
+            </tr>
+            <tr>
+              <td><code>empty inputs</code></td>
+              <td>Empty pattern list matches nothing; empty pattern raises.</td>
+            </tr>
+            <tr>
+              <td><code>pattern accessors</code></td>
+              <td><code>pattern_count</code>, <code>pattern</code>, and the out-of-bounds exception.</td>
+            </tr>
+            <tr>
+              <td><code>ignore_case</code></td>
+              <td>ASCII folding on, and case sensitivity when off.</td>
+            </tr>
+            <tr>
+              <td rowspan="2">leftmost-longest</td>
+              <td><code>selection</code></td>
+              <td>Leftmost beats longest; longest breaks ties at one start.</td>
+            </tr>
+            <tr>
+              <td><code>replace_all</code></td>
+              <td>Non-overlapping replacement, and untouched input when nothing matches.</td>
+            </tr>
+            <tr>
+              <td rowspan="2">streaming</td>
+              <td><code>find_iter</code></td>
+              <td>Identical to <code>find_all</code>, and lazy enough to stop early.</td>
+            </tr>
+            <tr>
+              <td><code>chunk boundary</code></td>
+              <td>A match spanning two feeds, with absolute offsets, and <code>pos</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The report order is the part carried entirely by these examples. The
+        oracle compares match <em>sets</em> &mdash; both sides are sorted before
+        comparison, because the naive scan produces matches grouped by pattern
+        rather than by offset &mdash; so a change to the ordering rules would
+        slip past all 1000 generated cases and be caught by
+        <code>ushers</code> and <code>overlapping</code> instead.
+      </p>
+
+      <h2 id="running">Running it yourself</h2>
+
+      <pre><code>opam install . --deps-only --with-test
+dune build @all
+dune runtest</code></pre>
+
+      <p>
+        That is what CI does, on <code>ubuntu-latest</code>, against OCaml
+        4.14 and 5.4, for every push to <code>main</code> and every pull
+        request. There is no separate long-running suite: the 2000 generated
+        cases run in the ordinary test job.
+      </p>
+
+      <h2 id="limits">What none of this covers</h2>
+
+      <p>
+        Stated plainly, because a page about correctness that only lists
+        strengths is marketing.
+      </p>
+
+      <dl>
+        <dt><strong>No cross-implementation differential test</strong></dt>
+        <dd>
+          Nothing runs this library against the Rust or Python
+          implementations. The
+          <a href="compatibility.html">compatibility claims</a> are a reading
+          of published behaviour, not a test result. The
+          <a href="compatibility.html#vectors">conformance vectors</a> are
+          there so anyone can close that gap from the outside.
+        </dd>
+        <dt><strong>Leftmost-longest maximality is not asserted</strong></dt>
+        <dd>
+          The property test checks that the selection is ordered,
+          non-overlapping and made of real matches. It does not assert that
+          each selected match is the longest one starting at that offset, nor
+          that no selectable match was skipped. Those follow from the
+          <a href="semantics.html#leftmost-longest">selection rule</a> and are
+          covered by the worked examples, but they are not generated over.
+        </dd>
+        <dt><strong>Ordering is not generated over</strong></dt>
+        <dd>
+          As above: the oracle normalises before comparing, so ordering rests
+          on the hand-written cases alone.
+        </dd>
+        <dt><strong>No adversarial pattern sets</strong></dt>
+        <dd>
+          The generators produce small, friendly pattern sets. Nothing
+          exercises tens of thousands of patterns, deep tries, patterns near
+          the length of the input, or memory behaviour under load.
+        </dd>
+        <dt><strong>No fuzzing, no benchmarks, no audit</strong></dt>
+        <dd>
+          There is no AFL or Crowbar target, no published performance figures,
+          and no external review. This is a small pure-OCaml library at 0.1.0.
+        </dd>
+        <dt><strong>Not constant-time</strong></dt>
+        <dd>
+          Scan time depends on the input and on how many matches it contains.
+          Do not use this to compare secrets.
+        </dd>
+      </dl>
+
+      <h2 id="reporting">If you find a disagreement</h2>
+
+      <p>
+        A pattern set, an input, what you got and what you expected is enough
+        to reproduce anything on this site &mdash; every claim here is a
+        function of those two inputs.
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">Open
+        an issue</a>. A case that breaks the oracle is a bug; a case where
+        another implementation disagrees but the oracle does not is a
+        semantics difference, and belongs on the
+        <a href="compatibility.html">compatibility page</a>.
+      </p>
+
+      <p>
+        Back to <a href="semantics.html">the semantics</a>, or on to
+        <a href="api.html">the API</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick">github.com/thevilledev/ocaml-aho-corasick</a>
+        &middot; <a href="https://ville.dev/ocaml-aho-corasick/api/">API documentation</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">issues</a>
+      </p>
+    </footer>
+  </body>
+</html>
