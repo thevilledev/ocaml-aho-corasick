@@ -24,6 +24,7 @@
       semantics |
       <a href="compatibility.html">compatibility</a> |
       <a href="correctness.html">correctness</a> |
+      <a href="performance.html">performance</a> |
       <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
     </nav>
 
@@ -376,28 +377,87 @@
       <h2 id="streaming">Streaming</h2>
 
       <p>
-        <code>Stream.feed t st chunk</code> reports the matches whose
-        <em>last</em> byte lies in <code>chunk</code>, with offsets counted
-        from the start of the stream rather than the start of the chunk. A
-        match that begins in one chunk and ends in a later one is reported by
-        the feed that supplies its last byte, with the correct absolute
-        <code>start</code>.
+        A stream is scanned with the same three semantics as a whole input,
+        and each streamed form is defined by an equality with its whole-input
+        counterpart: for any way of splitting an input into chunks,
+        concatenating the per-feed results gives exactly what the whole-input
+        function gives, in the same order, with offsets counted from the start
+        of the stream rather than the start of the chunk. A match that begins
+        in one chunk and ends in a later one is reported with the correct
+        absolute <code>start</code>.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>The streamed forms and their whole-input counterparts</caption>
+          <thead>
+            <tr>
+              <th scope="col">Streamed</th>
+              <th scope="col">Equals, concatenated</th>
+              <th scope="col">A match is reported by</th>
+              <th scope="col">At end of input</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Stream.feed</code></td>
+              <td><code>find_all</code></td>
+              <td>the feed that supplies its last byte</td>
+              <td>nothing to flush</td>
+            </tr>
+            <tr>
+              <td><code>Stream.feed_nonoverlapping</code></td>
+              <td>
+                the greedy earliest-end selection: whenever one or more
+                matches end, the longest of them is reported and scanning
+                restarts after it &mdash; the semantics of Rust
+                <code>aho-corasick</code>'s <code>stream_find_iter</code>
+              </td>
+              <td>the feed that supplies its last byte</td>
+              <td>nothing to flush</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest.feed</code></td>
+              <td><code>find_leftmost_longest</code></td>
+              <td>
+                the first feed whose input reaches one longest-pattern length
+                past the match's start
+              </td>
+              <td><code>flush</code> returns the rest</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Replace.feed</code></td>
+              <td><code>replace_all</code></td>
+              <td>
+                output is released once no pending or unseen match can still
+                cover it, at most one longest-pattern length behind the input
+              </td>
+              <td><code>flush</code> returns the final piece</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The first two forms never buffer: every match is reported as soon as
+        its final byte is seen, so a stream that is cut short has still
+        reported everything that actually matched. Leftmost-longest inherently
+        needs lookahead, because a longer match starting at or before a
+        candidate may still be forming; but no match can outgrow the longest
+        pattern, so the lookahead is bounded by one longest-pattern length,
+        the state holds at most that window of candidates, and the streamed
+        result is exact rather than approximate. Rust's
+        <code>aho-corasick</code> declines leftmost match kinds on streams;
+        here they are available, at the cost of that bounded latency and a
+        final <code>flush</code>.
       </p>
 
       <p>
-        There is nothing to flush and no end-of-stream call: every match is
-        reported as soon as its final byte is seen, so a stream that is cut
-        short has still reported everything that actually matched. The
-        guarantee is an equality &mdash; for any way of splitting an input into
-        chunks, concatenating the per-feed result lists gives exactly
-        <code>find_all</code> of the whole input, in the same order.
-      </p>
-
-      <p>
-        <code>Stream</code> has no leftmost-longest counterpart, because
-        choosing the longest match at a position requires bytes that may not
-        have arrived yet. Buffer the input and use
-        <code>find_leftmost_longest</code> if you need that.
+        <code>feed_nonoverlapping</code> is not leftmost-longest. It reports
+        the match that ends first: with patterns <code>["Samwise"; "Sam"]</code>
+        and input <code>Samwise</code> it reports <code>Sam</code>, where
+        <code>Stream.Leftmost_longest</code> reports <code>Samwise</code>.
+        Feed any one stream with only one of the two.
       </p>
 
       <h2 id="unspecified">What is deliberately not specified</h2>

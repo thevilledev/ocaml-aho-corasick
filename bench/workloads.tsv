@@ -1,0 +1,22 @@
+# name	patterns	haystack	expected	engines
+# expected: the match count rebar records for this pattern set and haystack
+# (BurntSushi/aho-corasick benchmarks/definitions, standard semantics),
+# or - when no recorded value exists. engines: all, or a comma-separated
+# subset of ocaml,rust,python.
+sherlock/names-2	patterns/sherlock-names-2.txt	corpora/sherlock.txt	558	all
+sherlock/names-7	patterns/sherlock-names-7.txt	corpora/sherlock.txt	740	all
+sherlock/prefixes	patterns/sherlock-prefixes.txt	corpora/sherlock.txt	582	all
+sherlock/absent	patterns/sherlock-absent.txt	corpora/sherlock.txt	0	all
+sherlock/words-5000	corpora/words-5000	corpora/sherlock.txt	-	all
+sherlock/words-15000	corpora/words-15000	corpora/sherlock.txt	-	all
+opensubtitles/names-5	patterns/opensubtitles-names-5.txt	corpora/en-sampled.txt	714	all
+opensubtitles/dictionary-15	corpora/dictionary-length-15.txt	corpora/en-sampled.txt	15	all
+opensubtitles/byte-a	patterns/byte-a.txt	corpora/en-sampled.txt	47062	all
+opensubtitles/bytes-8	patterns/bytes-8.txt	corpora/en-sampled.txt	309829	all
+dense/abc-1m	corpora/abc-patterns.txt	corpora/abc-1m.txt	-	all
+sparse/bytes-1m	corpora/bytes-patterns.txt	corpora/bytes-1m.bin	-	all
+pathological/suffixes	corpora/a-suffixes.txt	corpora/aaaa-200k.txt	-	all
+scaling/abc-64k	corpora/abc-patterns.txt	corpora/abc-64k.txt	-	ocaml,rust
+scaling/abc-256k	corpora/abc-patterns.txt	corpora/abc-256k.txt	-	ocaml,rust
+scaling/abc-1m	corpora/abc-patterns.txt	corpora/abc-1m.txt	-	ocaml,rust
+scaling/abc-4m	corpora/abc-patterns.txt	corpora/abc-4m.txt	-	ocaml,rust

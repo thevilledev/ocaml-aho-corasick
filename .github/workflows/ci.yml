@@ -20,3 +20,30 @@ jobs:
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build @all
       - run: opam exec -- dune runtest
+
+  # Differential test against the Rust aho-corasick crate, pyahocorasick
+  # and ahocorasick_rs on the fixed vectors plus 20 000 generated cases
+  # (compat/README.md), then a smoke run of the benchmark suite, whose
+  # match counts are cross-checked between implementations as well.
+  differential:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyahocorasick==2.3.1 ahocorasick_rs==1.0.3
+      - run: opam install . --deps-only
+      - run: opam exec -- ./compat/run.sh
+      - run: SECONDS_PER_RUN=0.2 WORKLOADS=workloads-smoke.tsv opam exec -- ./bench/run.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-outputs
+          path: |
+            compat/_out
+            bench/_out

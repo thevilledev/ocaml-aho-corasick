@@ -30,6 +30,7 @@
       <a href="semantics.html">semantics</a> |
       <a href="compatibility.html">compatibility</a> |
       <a href="correctness.html">correctness</a> |
+      <a href="performance.html">performance</a> |
       <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
     </nav>
 
@@ -189,18 +190,29 @@
         <li>
           A QCheck oracle compares <code>find_all</code> against a naive
           per-pattern scan over 1000 random pattern-set and input pairs, and
-          chunked streaming against whole-input scanning over 500 more.
+          each streaming mode against its whole-input counterpart over 500
+          more.
+        </li>
+        <li>
+          A differential test runs the library against the Rust
+          <code>aho-corasick</code> crate and pyahocorasick on 20&nbsp;000
+          generated cases in CI; the Rust crate's own test vectors are part of
+          the test suite.
         </li>
       </ul>
 
       <div class="notice">
         <p>
-          <strong>Pre-1.0, and not yet cross-tested against other
-          implementations.</strong> The semantics below are specified and
-          checked against an in-repository oracle; no differential harness
-          runs this library against the Rust or Python ones. The
-          <a href="compatibility.html#vectors">conformance vectors</a> are
-          published so you can run that comparison yourself.
+          <strong>Pre-1.0, cross-tested against other implementations.</strong>
+          On every push, a harness runs this library, the Rust
+          <code>aho-corasick</code> crate and pyahocorasick over the same
+          20&nbsp;000 generated cases and requires the answers to agree. With
+          the Rust crate they are identical in every mode, offsets and order
+          included; the one divergence found is a bug in pyahocorasick's
+          <code>iter_long</code>. Details on the
+          <a href="compatibility.html#differential">compatibility page</a>,
+          throughput figures on the <a href="performance.html">performance
+          page</a>.
         </p>
       </div>
 
@@ -341,6 +353,15 @@ let st, ms1 = Aho_corasick.Stream.feed t st "ush"   (* ms1 = [], nothing has fin
 let _st, ms2 = Aho_corasick.Stream.feed t st "ers"  (* she 1..4, he 2..4, hers 2..6 *)</code></pre>
 
       <p>
+        A stream can also be scanned non-overlapping
+        (<code>Stream.feed_nonoverlapping</code>, the semantics of the Rust
+        crate's stream iterator) or with leftmost-longest selection and
+        replacement (<code>Stream.Leftmost_longest</code>,
+        <code>Stream.Replace</code>), which the Rust crate does not offer on
+        streams; the lookahead those need is bounded by the longest pattern.
+      </p>
+
+      <p>
         The whole surface is eight functions and a submodule; see
         <a href="api.html">the API</a>.
       </p>
@@ -370,18 +391,22 @@ let _st, ms2 = Aho_corasick.Stream.feed t st "ers"  (* she 1..4, he 2..4, hers 2
           first &mdash; this is the difference most likely to change your
           results.
         </dd>
-        <dt><strong>Leftmost-longest over a stream</strong></dt>
+        <dt><strong>Zero-latency leftmost-longest over a stream</strong></dt>
         <dd>
           Choosing the longest match at a position needs the bytes that follow
-          it, so <code>Stream</code> reports standard overlapping matches
-          only. The Rust crate refuses the same combination, for the same
-          reason.
+          it. <code>Stream.Leftmost_longest</code> and
+          <code>Stream.Replace</code> therefore report a match only once the
+          input is one longest-pattern length past its start, and need a
+          final <code>flush</code>; <code>Stream.feed</code> and
+          <code>Stream.feed_nonoverlapping</code> report immediately.
         </dd>
         <dt><strong>Vectorised scanning</strong></dt>
         <dd>
-          The inner loop is a plain hash-table transition per byte. There is
-          no SIMD prefilter and no dense transition table; this is a correct,
-          small, dependency-free implementation, not a race with Hyperscan.
+          The inner loop is one table lookup per byte near the root and a
+          sorted-children lookup deeper down. There is no SIMD prefilter;
+          this is a correct, small, dependency-free implementation, not a
+          race with Hyperscan. The <a href="performance.html">performance
+          page</a> has the measured gap to the Rust crate.
         </dd>
       </dl>
 

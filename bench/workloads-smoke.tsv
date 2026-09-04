@@ -1,0 +1,3 @@
+# A single workload with a recorded count, for CI: keeps the benchmark
+# scripts working and cross-checks one count between all implementations.
+sherlock/names-2	patterns/sherlock-names-2.txt	corpora/sherlock.txt	558	all

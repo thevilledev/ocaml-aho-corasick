@@ -24,6 +24,7 @@
       <a href="semantics.html">semantics</a> |
       <a href="compatibility.html">compatibility</a> |
       correctness |
+      <a href="performance.html">performance</a> |
       <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
     </nav>
 
@@ -76,7 +77,7 @@ let naive patterns text =
 
       <div class="table-scroll">
         <table>
-          <caption>The three properties, run on every CI run</caption>
+          <caption>The six properties, run on every CI run</caption>
           <thead>
             <tr>
               <th scope="col">Property</th>
@@ -97,6 +98,32 @@ let naive patterns text =
                 Feeding the input in random chunks and concatenating the
                 results gives exactly <code>find_all</code> of the whole
                 input, as a list, in order.
+              </td>
+            </tr>
+            <tr>
+              <td><code>chunked non-overlapping = greedy earliest-end</code></td>
+              <td class="n">500</td>
+              <td>
+                <code>Stream.feed_nonoverlapping</code> over random chunks
+                equals the greedy earliest-end selection computed from
+                <code>find_all</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>chunked leftmost-longest = whole input</code></td>
+              <td class="n">500</td>
+              <td>
+                <code>Stream.Leftmost_longest</code> over random chunks, plus
+                <code>flush</code>, equals <code>find_leftmost_longest</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><code>chunked replace = replace_all</code></td>
+              <td class="n">500</td>
+              <td>
+                <code>Stream.Replace</code> over random chunks, with shrinking,
+                growing and deleting replacements, equals
+                <code>replace_all</code>.
               </td>
             </tr>
             <tr>
@@ -135,7 +162,7 @@ let naive patterns text =
       <h2 id="examples">The worked examples</h2>
 
       <p>
-        Ten Alcotest cases pin down the behaviour the oracle cannot see,
+        Thirteen Alcotest cases pin down the behaviour the oracle cannot see,
         starting with the canonical pattern set from the original 1975
         paper.
       </p>
@@ -186,13 +213,25 @@ let naive patterns text =
               <td>Non-overlapping replacement, and untouched input when nothing matches.</td>
             </tr>
             <tr>
-              <td rowspan="2">streaming</td>
+              <td rowspan="5">streaming</td>
               <td><code>find_iter</code></td>
               <td>Identical to <code>find_all</code>, and lazy enough to stop early.</td>
             </tr>
             <tr>
               <td><code>chunk boundary</code></td>
               <td>A match spanning two feeds, with absolute offsets, and <code>pos</code>.</td>
+            </tr>
+            <tr>
+              <td><code>non-overlapping</code></td>
+              <td>Scanning restarts after a match, across a chunk boundary; earliest end wins on <code>Samwise</code>.</td>
+            </tr>
+            <tr>
+              <td><code>leftmost-longest</code></td>
+              <td>A shorter match is held back while a longer one may still form, and released by <code>flush</code>; matches nothing can outrank are not held back.</td>
+            </tr>
+            <tr>
+              <td><code>replace</code></td>
+              <td>Streamed replacement equals <code>replace_all</code>, with the longest match winning across a chunk boundary.</td>
             </tr>
           </tbody>
         </table>
@@ -207,17 +246,54 @@ let naive patterns text =
         <code>ushers</code> and <code>overlapping</code> instead.
       </p>
 
+      <h2 id="vectors">Other implementations' vectors</h2>
+
+      <p>
+        A second Alcotest suite, <code>test/test_conformance.ml</code>, runs
+        the test vectors of other implementations through this library: the
+        Rust <code>aho-corasick</code> crate's own tables (its
+        <code>BASICS</code>, <code>STANDARD</code>,
+        <code>NON_OVERLAPPING</code>, <code>OVERLAPPING</code>,
+        <code>LEFTMOST</code>, <code>LEFTMOST_LONGEST</code>, case-insensitive
+        and regression tables, and its standalone regression tests), the
+        vectors daachorse adds to the same tables, pyahocorasick's
+        <code>iter_long</code> regression cases, the examples in the Rust
+        crate's API documentation, and the vectors on the
+        <a href="compatibility.html#vectors">compatibility page</a>. Each
+        vector is run through every function here that promises the same
+        semantics &mdash; whole-input, lazy, and streamed with 1-byte and
+        3-byte chunks &mdash; and through <code>replace_all</code> and
+        <code>Stream.Replace</code> where the semantics are leftmost-longest.
+        Vectors containing the empty pattern, which <code>build</code>
+        rejects, and the leftmost-first tables are the only ones left out.
+      </p>
+
+      <h2 id="differential">The differential test</h2>
+
+      <p>
+        Vectors are still cases someone thought of. The
+        <a href="compatibility.html#differential">differential harness</a> in
+        <code>compat/</code> generates 20&nbsp;000 pattern-set, input and
+        chunking combinations from a fixed seed, runs them through this
+        library, the Rust crate, pyahocorasick and ahocorasick_rs, and
+        compares the outputs as strings: same pattern indices, same offsets,
+        same order. It is a CI job, and a change that makes this library
+        disagree with the Rust crate fails the build.
+      </p>
+
       <h2 id="running">Running it yourself</h2>
 
       <pre><code>opam install . --deps-only --with-test
 dune build @all
-dune runtest</code></pre>
+dune runtest
+./compat/run.sh      # the differential test; needs cargo and pyahocorasick</code></pre>
 
       <p>
         That is what CI does, on <code>ubuntu-latest</code>, against OCaml
         4.14 and 5.4, for every push to <code>main</code> and every pull
-        request. There is no separate long-running suite: the 2000 generated
-        cases run in the ordinary test job.
+        request: the 3500 generated property cases and the ported vectors run
+        in the ordinary test job, and the differential test in a job of its
+        own.
       </p>
 
       <h2 id="limits">What none of this covers</h2>
@@ -228,39 +304,44 @@ dune runtest</code></pre>
       </p>
 
       <dl>
-        <dt><strong>No cross-implementation differential test</strong></dt>
+        <dt><strong>The differential test covers three other implementations</strong></dt>
         <dd>
-          Nothing runs this library against the Rust or Python
-          implementations. The
-          <a href="compatibility.html">compatibility claims</a> are a reading
-          of published behaviour, not a test result. The
-          <a href="compatibility.html#vectors">conformance vectors</a> are
-          there so anyone can close that gap from the outside.
+          The Rust crate, pyahocorasick and ahocorasick_rs, and the last of
+          those is the Rust crate underneath. Nothing runs this library
+          against Hyperscan or the Go and Java implementations; the
+          <a href="compatibility.html#vectors">conformance vectors</a> and the
+          harness's <a href="https://github.com/thevilledev/ocaml-aho-corasick/blob/main/compat/README.md">case
+          format</a> are there so anyone can add one.
         </dd>
-        <dt><strong>Leftmost-longest maximality is not asserted</strong></dt>
+        <dt><strong>Leftmost-longest maximality is not asserted by the in-repository oracle</strong></dt>
         <dd>
           The property test checks that the selection is ordered,
           non-overlapping and made of real matches. It does not assert that
           each selected match is the longest one starting at that offset, nor
           that no selectable match was skipped. Those follow from the
-          <a href="semantics.html#leftmost-longest">selection rule</a> and are
-          covered by the worked examples, but they are not generated over.
+          <a href="semantics.html#leftmost-longest">selection rule</a>; the
+          differential test checks them against the Rust crate's
+          leftmost-longest search, and the ported vectors check them by
+          example.
         </dd>
-        <dt><strong>Ordering is not generated over</strong></dt>
+        <dt><strong>Ordering is not generated over by the in-repository oracle</strong></dt>
         <dd>
-          As above: the oracle normalises before comparing, so ordering rests
-          on the hand-written cases alone.
+          The oracle normalises before comparing. Ordering rests on the
+          hand-written cases and on the differential test, which compares
+          order too.
         </dd>
-        <dt><strong>No adversarial pattern sets</strong></dt>
+        <dt><strong>Small adversarial pattern sets only</strong></dt>
         <dd>
-          The generators produce small, friendly pattern sets. Nothing
-          exercises tens of thousands of patterns, deep tries, patterns near
-          the length of the input, or memory behaviour under load.
+          The generators produce small pattern sets. The
+          <a href="performance.html">benchmarks</a> exercise 15&nbsp;000-word
+          dictionaries and pathological overlap, but only for throughput and
+          match counts; nothing generates over large pattern sets, patterns
+          near the length of the input, or memory behaviour under load.
         </dd>
-        <dt><strong>No fuzzing, no benchmarks, no audit</strong></dt>
+        <dt><strong>No fuzzing, no audit</strong></dt>
         <dd>
-          There is no AFL or Crowbar target, no published performance figures,
-          and no external review. This is a small pure-OCaml library at 0.1.0.
+          There is no AFL or Crowbar target and no external review. This is a
+          small pure-OCaml library at 0.1.0.
         </dd>
         <dt><strong>Not constant-time</strong></dt>
         <dd>

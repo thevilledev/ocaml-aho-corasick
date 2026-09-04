@@ -1,0 +1,12 @@
+[package]
+name = "aho-corasick-compat"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Differential-test and benchmark driver for the aho-corasick crate, used by ocaml-aho-corasick's compat harness"
+
+[dependencies]
+aho-corasick = "1.1.5"
+
+[profile.release]
+debug = false
