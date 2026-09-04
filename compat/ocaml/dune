@@ -1,0 +1,5 @@
+; The differential-test and benchmark driver for this library. Not
+; installed; built by `dune build` and run by compat/run.sh and bench/run.sh.
+(executable
+ (name driver)
+ (libraries aho-corasick unix))
