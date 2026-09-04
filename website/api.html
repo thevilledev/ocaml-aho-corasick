@@ -24,6 +24,7 @@
       <a href="semantics.html">semantics</a> |
       <a href="compatibility.html">compatibility</a> |
       <a href="correctness.html">correctness</a> |
+      <a href="performance.html">performance</a> |
       <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
     </nav>
 
@@ -137,15 +138,35 @@ match Aho_corasick.find_iter t input () with
   type state
   val start : t -&gt; state
   val feed : t -&gt; state -&gt; string -&gt; state * match_ list
+  val feed_nonoverlapping : t -&gt; state -&gt; string -&gt; state * match_ list
   val pos : state -&gt; int
+
+  module Leftmost_longest : sig
+    type state
+    val start : t -&gt; state
+    val feed : t -&gt; state -&gt; string -&gt; state * match_ list
+    val flush : state -&gt; match_ list
+    val pos : state -&gt; int
+  end
+
+  module Replace : sig
+    type state
+    val start : t -&gt; f:(match_ -&gt; string) -&gt; state
+    val feed : t -&gt; state -&gt; string -&gt; state * string
+    val flush : state -&gt; string
+    val pos : state -&gt; int
+  end
 end</code></pre>
 
       <p>
         <code>feed</code> takes the automaton, the position you got back last
         time, and the next chunk. It returns the new position and the matches
-        whose last byte was in that chunk, with offsets counted from the start
-        of the stream. Nothing is buffered and nothing needs flushing at the
-        end.
+        whose last byte was in that chunk, overlapping ones included, with
+        offsets counted from the start of the stream. Nothing is buffered and
+        nothing needs flushing at the end. <code>feed_nonoverlapping</code> is
+        the same call with non-overlapping, earliest-end semantics &mdash; the
+        semantics of Rust <code>aho-corasick</code>'s
+        <code>stream_find_iter</code> &mdash; and never buffers either.
       </p>
 
       <svg class="diagram diagram-mid" viewBox="0 0 340 210" role="img"
@@ -217,11 +238,25 @@ let rec pump t st ic =
       </p>
 
       <p>
-        <code>Stream</code> deliberately has no leftmost-longest variant:
-        choosing the longest match at a position needs bytes that have not
-        arrived. Buffer and use <code>find_leftmost_longest</code> if you need
-        that; the Rust crate refuses the same combination for the same reason.
+        <code>Stream.Leftmost_longest</code> streams the
+        <code>find_leftmost_longest</code> selection and
+        <code>Stream.Replace</code> streams <code>replace_all</code>. Both
+        need lookahead, since a longer match starting earlier may still be
+        forming, but never more than one longest-pattern length of it: a
+        match is reported by the first <code>feed</code> whose input reaches
+        that far past its start, and <code>flush</code> at end of input
+        returns whatever was still pending. The state holds at most that
+        window. The Rust crate refuses leftmost match kinds on streams; here
+        they cost a bounded delay and a final <code>flush</code>.
       </p>
+
+      <pre><code>(* redact a socket without concatenating it *)
+let module R = Aho_corasick.Stream.Replace in
+let st = R.start t ~f:(fun _ -&gt; "[REDACTED]") in
+let st, out1 = R.feed t st chunk1 in
+let st, out2 = R.feed t st chunk2 in
+let out3 = R.flush st in
+(* out1 ^ out2 ^ out3 = replace_all t ~f (chunk1 ^ chunk2) *)</code></pre>
 
       <h2 id="cost">Cost</h2>
 
@@ -238,7 +273,7 @@ let rec pump t st ic =
           <tbody>
             <tr>
               <td><code>build</code></td>
-              <td>O(total pattern length)</td>
+              <td>O(total pattern length), plus 256 entries for each of the shallowest nodes, at most 4096 of them</td>
               <td>The automaton, once.</td>
             </tr>
             <tr>
@@ -267,28 +302,44 @@ let rec pump t st ic =
               <td>The output buffer.</td>
             </tr>
             <tr>
-              <td><code>Stream.feed</code></td>
+              <td><code>Stream.feed</code>, <code>Stream.feed_nonoverlapping</code></td>
               <td>O(chunk + matches in chunk)</td>
               <td>The returned list; state is two integers.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest.feed</code></td>
+              <td>O(chunk + c log c), with <code>c</code> the candidate matches seen in the chunk</td>
+              <td>The returned list, and at most one longest-pattern window of pending candidates.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Replace.feed</code></td>
+              <td>As above, plus a copy of the chunk</td>
+              <td>The output piece, and at most one longest-pattern length of held-back input.</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <p>
-        The per-byte cost is a hash-table lookup for the transition, plus the
-        failure links the automaton has to follow when a byte does not extend
-        the current match. Those follows are bounded in total, not per byte: a
+        The per-byte cost is one array load for as long as the automaton is
+        near the root, which is nearly always. The shallowest nodes &mdash; up
+        to 4096 of them, so every automaton built from a modest pattern set in
+        full &mdash; carry a 256-entry row of fully resolved next states, so
+        no failure link is ever followed from them. Deeper nodes keep only
+        their real children, sorted by byte, and fall back along failure links
+        on a mismatch. Those follows are bounded in total, not per byte: a
         byte can push the automaton one node deeper, and every failure step
         moves it strictly shallower, so a scan of <code>n</code> bytes takes at
         most <code>n</code> failure steps overall &mdash; amortised constant
-        time per byte, whatever the pattern set.
+        time per byte, whatever the pattern set. Measured figures, against
+        the Rust crate and the Python libraries on the same corpora, are on
+        the <a href="performance.html">performance page</a>.
       </p>
 
       <p>
-        Memory is proportional to the total length of the patterns: one
-        hash-table entry per distinct trie edge, plus a handful of arrays
-        indexed by node. Nothing scales with the input.
+        Memory is proportional to the total length of the patterns: a few
+        integers per trie node and per edge, plus 2&nbsp;KiB for each dense
+        row, capped at 8&nbsp;MiB. Nothing scales with the input.
       </p>
 
       <p class="fine">

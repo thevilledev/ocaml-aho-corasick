@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="How ocaml-aho-corasick lines up with other Aho-Corasick implementations: match kinds, offset conventions, a function mapping to the Rust aho-corasick crate, a porting checklist and conformance vectors.">
+    <meta name="description" content="How ocaml-aho-corasick lines up with other Aho-Corasick implementations: match kinds, offset conventions, a function mapping to the Rust aho-corasick crate, a porting checklist, conformance vectors, and the differential test that runs it against the Rust crate and pyahocorasick.">
     <meta name="theme-color" content="#ffffff">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Compatibility">
-    <meta property="og:description" content="Match kinds, offset conventions and conformance vectors for porting a scanner to or from OCaml.">
+    <meta property="og:description" content="Match kinds, offset conventions, conformance vectors, and a differential test against the Rust crate and pyahocorasick.">
     <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/compatibility.html">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="Compatibility">
-    <meta name="twitter:description" content="Match kinds, offset conventions and conformance vectors for porting a scanner to or from OCaml.">
+    <meta name="twitter:description" content="Match kinds, offset conventions, conformance vectors, and a differential test against the Rust crate and pyahocorasick.">
     <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/compatibility.html">
     <link rel="stylesheet" href="styles.css?v=20260901">
     <title>Compatibility &mdash; ocaml-aho-corasick</title>
@@ -24,6 +24,7 @@
       <a href="semantics.html">semantics</a> |
       compatibility |
       <a href="correctness.html">correctness</a> |
+      <a href="performance.html">performance</a> |
       <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
     </nav>
 
@@ -49,11 +50,13 @@
         <p>
           <strong>What "compatible" means here.</strong> The
           <a href="semantics.html">semantics</a> are specified and checked
-          against an independent oracle in CI. They are <em>not</em> checked
-          against another Aho&ndash;Corasick library by any automated harness.
-          Where this page says two implementations agree, that is a reading of
-          their documented behaviour, not a test result &mdash; which is why
-          the <a href="#vectors">conformance vectors</a> below exist.
+          against an independent oracle in CI, and a
+          <a href="#differential">differential harness</a> runs this library,
+          the Rust <code>aho-corasick</code> crate and pyahocorasick over the
+          same 20&nbsp;000 generated cases on every push. Where this page says
+          two implementations agree, that is a test result; where it says they
+          differ, the difference has been observed, not inferred from
+          documentation.
         </p>
       </div>
 
@@ -269,7 +272,7 @@
             <tr>
               <td><code>find_all</code>, <code>find_iter</code></td>
               <td><code>find_overlapping_iter</code>, with <code>MatchKind::Standard</code></td>
-              <td>Report order is specified here; sort if you depend on it there.</td>
+              <td>Identical results in the differential test, report order included; only this side promises the order.</td>
             </tr>
             <tr>
               <td><code>find_leftmost_longest</code></td>
@@ -287,9 +290,19 @@
               <td>Both stop at the first match.</td>
             </tr>
             <tr>
+              <td><code>Stream.feed_nonoverlapping</code></td>
+              <td><code>find_iter</code> and <code>stream_find_iter</code>, with <code>MatchKind::Standard</code></td>
+              <td>The same earliest-end selection, whole-input or streamed; identical in the differential test, including over the same chunk boundaries.</td>
+            </tr>
+            <tr>
               <td><code>Stream.feed</code></td>
-              <td><code>stream_find_iter</code>, with <code>MatchKind::Standard</code></td>
-              <td>Not identical: Rust's stream iterator is non-overlapping, this one reports overlaps.</td>
+              <td>&mdash;</td>
+              <td>Rust's stream iterator is non-overlapping only. Equals <code>find_overlapping_iter</code> of the concatenated input.</td>
+            </tr>
+            <tr>
+              <td><code>Stream.Leftmost_longest</code>, <code>Stream.Replace</code></td>
+              <td>&mdash;</td>
+              <td>Rust rejects leftmost match kinds on streams. These equal the crate's leftmost-longest <code>find_iter</code> and <code>replace_all</code> of the concatenated input.</td>
             </tr>
             <tr>
               <td>&mdash;</td>
@@ -301,10 +314,16 @@
       </div>
 
       <p>
-        The two libraries also agree on a structural restriction, and for the
-        same reason: leftmost semantics need lookahead, so they cannot be
-        offered over a stream or combined with overlapping search. Rust makes
-        that a runtime error; here it is simply absent from the interface.
+        The two libraries part ways on streams. Rust's
+        <code>stream_find_iter</code> supports <code>MatchKind::Standard</code>
+        only, non-overlapping, and rejects leftmost kinds at runtime, because
+        leftmost semantics need lookahead. Here the lookahead is bounded by
+        the longest pattern, so a stream can be scanned all three ways:
+        <code>Stream.feed</code> reports every overlapping match,
+        <code>Stream.feed_nonoverlapping</code> is exactly Rust's stream
+        iterator, and <code>Stream.Leftmost_longest</code> and
+        <code>Stream.Replace</code> bring leftmost-longest selection and
+        replacement to streams, with a final <code>flush</code>.
       </p>
 
       <h2 id="checklist">Porting checklist</h2>
@@ -348,16 +367,25 @@
           other implementation makes no promise.
         </li>
         <li>
-          <strong>Streaming.</strong> Available here for overlapping matches
-          only, with absolute offsets and nothing to flush.
+          <strong>Streaming.</strong> Absolute offsets here, in three
+          semantics. <code>Stream.feed</code> and
+          <code>Stream.feed_nonoverlapping</code> have nothing to flush;
+          <code>Stream.Leftmost_longest</code> and <code>Stream.Replace</code>
+          report up to one longest-pattern length late and need a final
+          <code>flush</code>. An implementation that only streams
+          non-overlapping matches (Rust) corresponds to
+          <code>feed_nonoverlapping</code>.
         </li>
       </ol>
 
       <h2 id="vectors">Conformance vectors</h2>
 
       <p>
-        These are the answers this library gives. They are small on purpose:
-        each one isolates a decision that implementations differ on, so a
+        These are the answers this library gives, and the test suite checks
+        every row (<code>test/test_conformance.ml</code>, which also carries
+        the Rust crate's own vector tables and daachorse's and
+        pyahocorasick's additions to them). They are small on purpose: each
+        one isolates a decision that implementations differ on, so a
         disagreement points straight at the cause. Offsets are half-open byte
         offsets, and <code>name@a..b</code> means the pattern
         <code>name</code> matched <code>s[a..b)</code>.
@@ -462,20 +490,119 @@
         match, will differ here and nowhere else.
       </p>
 
-      <h2 id="not-claimed">What is not claimed</h2>
+      <h2 id="differential">The differential test</h2>
 
       <p>
-        No differential test runs this library against the Rust or Python
-        implementations. The table above is a careful reading of their
-        documentation, checked against the behaviour those documents specify;
-        it is not a CI job, and either side may have bugs the other does not.
-        Treating agreement as established would be exactly the kind of
-        unverified claim this page exists to avoid.
+        Vectors are cases someone thought of. The harness in
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick/tree/main/compat"><code>compat/</code></a>
+        generates cases nobody did: from a fixed seed, 20&nbsp;000 pattern
+        sets over small alphabets (so that patterns are dense with suffixes
+        and overlaps of one another), inputs with patterns planted in them,
+        every byte value including NUL and bytes above <code>0x7f</code>,
+        case-folded cases, and random chunk boundaries for the streamed
+        modes. One driver per implementation reads the same case file and
+        prints results in the same format, and the outputs are compared as
+        strings: same pattern indices, same half-open byte offsets, same
+        order. It runs in CI on every push.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Seed 20260904: 20&nbsp;348 cases, the fixed vectors included</caption>
+          <thead>
+            <tr>
+              <th scope="col">Against</th>
+              <th scope="col">Modes compared</th>
+              <th scope="col">Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Rust <code>aho-corasick</code> 1.1.5</td>
+              <td>
+                overlapping; standard non-overlapping, whole-input and over
+                the same chunk boundaries; leftmost-longest; replacement;
+                <code>is_match</code>; first match; and the streamed
+                overlapping, leftmost-longest and replacement forms against
+                the crate's whole-input answers
+              </td>
+              <td>Identical in every case and every mode, order included.</td>
+            </tr>
+            <tr>
+              <td>ahocorasick_rs 1.0.3</td>
+              <td>overlapping, standard, leftmost-longest, membership, first match</td>
+              <td>Identical in every case and every mode.</td>
+            </tr>
+            <tr>
+              <td>pyahocorasick 2.3.1, <code>iter()</code></td>
+              <td>overlapping, membership, first match</td>
+              <td>Identical in every case, order included.</td>
+            </tr>
+            <tr>
+              <td>pyahocorasick 2.3.1, <code>iter_long()</code></td>
+              <td>leftmost-longest, whole-input and streamed</td>
+              <td>19&nbsp;685 of 20&nbsp;348 identical; every difference is a match <code>iter_long</code> fails to report.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="pyahocorasick-iter-long">pyahocorasick's <code>iter_long</code> is not leftmost-longest</h3>
+
+      <p>
+        Its documentation describes "the longest match", its examples all
+        coincide with leftmost-longest, and its <code>iter()</code> agrees
+        with <code>find_all</code> to the byte. But <code>iter_long</code>
+        drops matches in two situations, and every one of the 663 differing
+        cases is one of them:
+      </p>
+
+      <ul>
+        <li>
+          When the input ends while the automaton is on the path of a longer
+          pattern, the failure chain is never consulted. Patterns
+          <code>abc</code> and <code>b</code>, input <code>ab</code>:
+          <code>b@1..2</code> is not reported. Append a byte and it is.
+        </li>
+        <li>
+          On a mismatch, only the immediate failure node is checked for a
+          pattern. Patterns <code>abcd</code>, <code>bcx</code> and
+          <code>c</code>, input <code>abcz</code>: <code>c@2..3</code> is not
+          reported.
+        </li>
+      </ul>
+
+      <p>
+        In 659 cases the output is the leftmost-longest output with matches
+        missing; in the other four a missed match is followed by the selection
+        of a later match overlapping it. It never reports something that is
+        not an occurrence. The comparison against <code>iter_long</code>
+        therefore runs in advisory mode, reported but not enforced; the
+        reproducers and the upstream history
+        (<a href="https://github.com/WojciechMula/pyahocorasick/issues/133">#133</a>,
+        <a href="https://github.com/WojciechMula/pyahocorasick/issues/185">#185</a>,
+        <a href="https://github.com/WojciechMula/pyahocorasick/issues/189">#189</a>)
+        are in
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick/blob/main/compat/README.md"><code>compat/README.md</code></a>.
+        If you port a leftmost-longest scanner from pyahocorasick, expect
+        this library to find matches it did not.
+      </p>
+
+      <h2 id="not-claimed">What is still not claimed</h2>
+
+      <p>
+        Three implementations, on generated cases up to 300 bytes with at
+        most eight patterns each, is not every implementation on every input.
+        Nothing runs this library against Hyperscan, or against the Go, Java
+        or C implementations; the case format in <code>compat/README.md</code>
+        is what a driver for any of them would need to speak. Leftmost-first
+        semantics remain absent here, so no comparison can be made in that
+        mode.
       </p>
 
       <p>
-        If you do run the vectors against another implementation and find a
-        disagreement,
+        If you run the vectors, or the harness, against another
+        implementation and find a disagreement,
         <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">open
         an issue</a> with the pattern set, the input and both outputs. A
         disagreement is either a bug here or a difference worth documenting on

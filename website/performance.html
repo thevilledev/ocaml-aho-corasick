@@ -1,0 +1,2464 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Measured throughput of ocaml-aho-corasick against the Rust aho-corasick crate, ahocorasick_rs and pyahocorasick on the same corpora, with match counts cross-checked between implementations and against rebar's recorded values.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Performance">
+    <meta property="og:description" content="Throughput against the Rust crate and the Python libraries on the same corpora, counts cross-checked.">
+    <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/performance.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Performance">
+    <meta name="twitter:description" content="Throughput against the Rust crate and the Python libraries on the same corpora, counts cross-checked.">
+    <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/performance.html">
+    <link rel="stylesheet" href="styles.css?v=20260901">
+    <title>Performance &mdash; ocaml-aho-corasick</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      <a href="api.html">api</a> |
+      <a href="semantics.html">semantics</a> |
+      <a href="compatibility.html">compatibility</a> |
+      <a href="correctness.html">correctness</a> |
+      performance |
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Performance</h1>
+
+      <p>
+        A throughput figure on its own says little: it depends on the text,
+        on how many patterns there are and how often they hit, and on
+        whether the implementation being compared did the same work. So
+        these measurements follow the discipline of the Rust crate's
+        <a href="https://github.com/BurntSushi/rebar">rebar</a> suite. The
+        corpora are rebar's own, fetched from a pinned commit and checked
+        against their SHA-256. Every implementation runs the same pattern
+        set over the same bytes in the same search mode. And every row
+        carries the number of matches found, which must agree between all
+        the implementations on that row and, where rebar records a count
+        for that pattern set and haystack, must reproduce it. A benchmark
+        whose counts differ is measuring different work, and the report
+        script fails on it.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>What is compared</caption>
+          <thead>
+            <tr>
+              <th scope="col">Column</th>
+              <th scope="col">What it is</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>OCaml</td>
+              <td>This library, through <code>compat/ocaml/driver.exe</code>.</td>
+            </tr>
+            <tr>
+              <td>Rust default</td>
+              <td>
+                The <code>aho-corasick</code> crate as a caller gets it: it
+                chooses between its NFAs and a DFA, and for small pattern
+                sets runs a SIMD prefilter (Teddy) that scans for candidate
+                bytes without stepping the automaton at all.
+              </td>
+            </tr>
+            <tr>
+              <td>Rust NFA</td>
+              <td>
+                The same crate forced to its non-contiguous NFA with the
+                prefilter off: the automaton alone, and the closest
+                structural match to this library.
+              </td>
+            </tr>
+            <tr>
+              <td>ahocorasick_rs</td>
+              <td>The Rust crate behind a Python binding, called from Python.</td>
+            </tr>
+            <tr>
+              <td>pyahocorasick</td>
+              <td>An independent C implementation, called from Python.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The search modes are the ones on the
+        <a href="compatibility.html#mapping">compatibility page</a>:
+        <code>overlapping</code> is <code>find_all</code> and
+        <code>find_overlapping_iter</code>; <code>overlapping_iter</code>
+        is <code>find_iter</code>, consumed lazily; <code>standard</code> is
+        <code>Stream.feed_nonoverlapping</code> over the whole input and
+        Rust's default <code>find_iter</code>; <code>leftmost_longest</code>
+        and <code>replace</code> are the leftmost-longest search and
+        <code>replace_all</code>; and the <code>_stream</code> modes feed the
+        input in 4&nbsp;KiB chunks. The Python columns time the call from
+        Python, Python objects per match included, which is what a Python
+        caller pays. Each cell is the median of at least three runs and at
+        least one second of running, on one core, after building the
+        automaton once.
+      </p>
+
+      <h2 id="results">Results</h2>
+
+      <p>
+        Generated by <code>bench/report.py</code> from one run of
+        <code>bench/run.sh</code>; the environment is listed first. The
+        machine is a shared cloud VM, so treat the figures as
+        order-of-magnitude comparisons between columns, not as absolute
+        numbers for your hardware. <a href="#reading">Reading the
+        results</a> below says what to make of them.
+      </p>
+
+      <ul>
+        <li>date: 2026-09-04T15:01:52Z</li>
+        <li>cpu: Intel(R) Xeon(R) Processor @ 2.80GHz x4</li>
+        <li>os: Linux 6.18.44-fc-v24 x86_64</li>
+        <li>ocaml: 5.3.0</li>
+        <li>rust: rustc 1.94.1 (e408947bf 2026-03-25) / aho-corasick 1.1.5</li>
+        <li>python: 3.11.15</li>
+        <li>pyahocorasick: 2.3.1</li>
+        <li>ahocorasick_rs: 1.0.3</li>
+        <li>seconds per measurement: 1</li>
+      </ul>
+      <div class="table-scroll">
+        <table>
+          <caption>Throughput, MB/s, median over runs (bigger is better)</caption>
+          <thead>
+            <tr>
+              <th scope="col">workload</th>
+              <th scope="col">mode</th>
+              <th scope="col" class="n">OCaml</th>
+              <th scope="col" class="n">Rust default</th>
+              <th scope="col" class="n">Rust NFA</th>
+              <th scope="col" class="n">ahocorasick_rs</th>
+              <th scope="col" class="n">pyahocorasick</th>
+              <th scope="col" class="n">matches</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>overlapping</td>
+              <td class="n">174</td>
+              <td class="n">9,636</td>
+              <td class="n">203</td>
+              <td class="n">7,618</td>
+              <td class="n">231</td>
+              <td class="n">558</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>overlapping_iter</td>
+              <td class="n">176</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">558</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>standard</td>
+              <td class="n">182</td>
+              <td class="n">11,071</td>
+              <td class="n">214</td>
+              <td class="n">7,075</td>
+              <td class="n"></td>
+              <td class="n">558</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>leftmost_longest</td>
+              <td class="n">153</td>
+              <td class="n">8,614</td>
+              <td class="n">210</td>
+              <td class="n">5,817</td>
+              <td class="n">252</td>
+              <td class="n">558</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>replace</td>
+              <td class="n">135</td>
+              <td class="n">7,447</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">593,047</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>standard_stream</td>
+              <td class="n">189</td>
+              <td class="n">280</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">558</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>overlapping_stream</td>
+              <td class="n">171</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">558</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">153</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">558</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>overlapping</td>
+              <td class="n">173</td>
+              <td class="n">524</td>
+              <td class="n">202</td>
+              <td class="n">514</td>
+              <td class="n">140</td>
+              <td class="n">740</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>overlapping_iter</td>
+              <td class="n">171</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">740</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>standard</td>
+              <td class="n">176</td>
+              <td class="n">527</td>
+              <td class="n">208</td>
+              <td class="n">513</td>
+              <td class="n"></td>
+              <td class="n">740</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>leftmost_longest</td>
+              <td class="n">149</td>
+              <td class="n">6,241</td>
+              <td class="n">202</td>
+              <td class="n">4,477</td>
+              <td class="n">144</td>
+              <td class="n">740</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>replace</td>
+              <td class="n">131</td>
+              <td class="n">5,406</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">592,628</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>standard_stream</td>
+              <td class="n">186</td>
+              <td class="n">282</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">740</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>overlapping_stream</td>
+              <td class="n">176</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">740</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">143</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">740</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>overlapping</td>
+              <td class="n">178</td>
+              <td class="n">10,511</td>
+              <td class="n">205</td>
+              <td class="n">7,570</td>
+              <td class="n">235</td>
+              <td class="n">582</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>overlapping_iter</td>
+              <td class="n">179</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">582</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>standard</td>
+              <td class="n">193</td>
+              <td class="n">11,900</td>
+              <td class="n">213</td>
+              <td class="n">7,347</td>
+              <td class="n"></td>
+              <td class="n">582</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>leftmost_longest</td>
+              <td class="n">151</td>
+              <td class="n">9,238</td>
+              <td class="n">201</td>
+              <td class="n">6,370</td>
+              <td class="n">255</td>
+              <td class="n">582</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>replace</td>
+              <td class="n">141</td>
+              <td class="n">7,053</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">594,818</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>standard_stream</td>
+              <td class="n">193</td>
+              <td class="n">280</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">582</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>overlapping_stream</td>
+              <td class="n">182</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">582</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">150</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">582</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>overlapping</td>
+              <td class="n">178</td>
+              <td class="n">87,180</td>
+              <td class="n">203</td>
+              <td class="n">88,701</td>
+              <td class="n">168</td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>overlapping_iter</td>
+              <td class="n">178</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>standard</td>
+              <td class="n">198</td>
+              <td class="n">87,385</td>
+              <td class="n">209</td>
+              <td class="n">89,501</td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>leftmost_longest</td>
+              <td class="n">156</td>
+              <td class="n">87,346</td>
+              <td class="n">210</td>
+              <td class="n">89,099</td>
+              <td class="n">149</td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>is_match</td>
+              <td class="n">170</td>
+              <td class="n">87,449</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">167</td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>replace</td>
+              <td class="n">144</td>
+              <td class="n">24,953</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">594,915</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>standard_stream</td>
+              <td class="n">199</td>
+              <td class="n">254</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>overlapping_stream</td>
+              <td class="n">180</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">154</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>overlapping</td>
+              <td class="n">64.0</td>
+              <td class="n">93.3</td>
+              <td class="n">67.1</td>
+              <td class="n">90.0</td>
+              <td class="n">35.6</td>
+              <td class="n">572</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>overlapping_iter</td>
+              <td class="n">63.0</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">572</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>standard</td>
+              <td class="n">63.2</td>
+              <td class="n">90.4</td>
+              <td class="n">69.2</td>
+              <td class="n">94.5</td>
+              <td class="n"></td>
+              <td class="n">567</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>leftmost_longest</td>
+              <td class="n">59.3</td>
+              <td class="n">93.4</td>
+              <td class="n">67.5</td>
+              <td class="n">91.5</td>
+              <td class="n">35.0</td>
+              <td class="n">567</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>replace</td>
+              <td class="n">53.2</td>
+              <td class="n">86.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">592,533</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>standard_stream</td>
+              <td class="n">61.9</td>
+              <td class="n">68.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">567</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>overlapping_stream</td>
+              <td class="n">64.5</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">572</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">61.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">567</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>overlapping</td>
+              <td class="n">45.9</td>
+              <td class="n">86.4</td>
+              <td class="n">53.0</td>
+              <td class="n">79.5</td>
+              <td class="n">28.6</td>
+              <td class="n">2,241</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>overlapping_iter</td>
+              <td class="n">44.1</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">2,241</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>standard</td>
+              <td class="n">46.9</td>
+              <td class="n">85.8</td>
+              <td class="n">58.9</td>
+              <td class="n">82.3</td>
+              <td class="n"></td>
+              <td class="n">2,100</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>leftmost_longest</td>
+              <td class="n">44.1</td>
+              <td class="n">85.6</td>
+              <td class="n">55.7</td>
+              <td class="n">82.4</td>
+              <td class="n">29.4</td>
+              <td class="n">2,100</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>replace</td>
+              <td class="n">42.5</td>
+              <td class="n">79.1</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">587,323</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>standard_stream</td>
+              <td class="n">49.7</td>
+              <td class="n">58.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">2,100</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>overlapping_stream</td>
+              <td class="n">49.4</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">2,241</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">47.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">2,100</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>overlapping</td>
+              <td class="n">171</td>
+              <td class="n">536</td>
+              <td class="n">202</td>
+              <td class="n">516</td>
+              <td class="n">159</td>
+              <td class="n">714</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>overlapping_iter</td>
+              <td class="n">169</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">714</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>standard</td>
+              <td class="n">180</td>
+              <td class="n">538</td>
+              <td class="n">209</td>
+              <td class="n">514</td>
+              <td class="n"></td>
+              <td class="n">714</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>leftmost_longest</td>
+              <td class="n">153</td>
+              <td class="n">7,379</td>
+              <td class="n">203</td>
+              <td class="n">5,175</td>
+              <td class="n">166</td>
+              <td class="n">714</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>replace</td>
+              <td class="n">139</td>
+              <td class="n">5,897</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">890,243</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>standard_stream</td>
+              <td class="n">199</td>
+              <td class="n">286</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">714</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>overlapping_stream</td>
+              <td class="n">180</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">714</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">153</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">714</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>overlapping</td>
+              <td class="n">82.3</td>
+              <td class="n">95.8</td>
+              <td class="n">73.4</td>
+              <td class="n">94.3</td>
+              <td class="n">37.5</td>
+              <td class="n">15</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>overlapping_iter</td>
+              <td class="n">83.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">15</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>standard</td>
+              <td class="n">86.4</td>
+              <td class="n">92.9</td>
+              <td class="n">73.5</td>
+              <td class="n">98.9</td>
+              <td class="n"></td>
+              <td class="n">15</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>leftmost_longest</td>
+              <td class="n">83.9</td>
+              <td class="n">97.7</td>
+              <td class="n">71.3</td>
+              <td class="n">94.6</td>
+              <td class="n">34.5</td>
+              <td class="n">15</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>replace</td>
+              <td class="n">78.9</td>
+              <td class="n">97.0</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">899,085</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>standard_stream</td>
+              <td class="n">85.3</td>
+              <td class="n">70.0</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">15</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>overlapping_stream</td>
+              <td class="n">82.8</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">15</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">82.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">15</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>overlapping</td>
+              <td class="n">83.9</td>
+              <td class="n">789</td>
+              <td class="n">167</td>
+              <td class="n">140</td>
+              <td class="n">146</td>
+              <td class="n">47,062</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>overlapping_iter</td>
+              <td class="n">133</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">47,062</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>standard</td>
+              <td class="n">85.9</td>
+              <td class="n">779</td>
+              <td class="n">168</td>
+              <td class="n">131</td>
+              <td class="n"></td>
+              <td class="n">47,062</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>leftmost_longest</td>
+              <td class="n">75.6</td>
+              <td class="n">782</td>
+              <td class="n">48.8</td>
+              <td class="n">130</td>
+              <td class="n">142</td>
+              <td class="n">47,062</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>replace</td>
+              <td class="n">42.8</td>
+              <td class="n">439</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">993,356</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>standard_stream</td>
+              <td class="n">144</td>
+              <td class="n">189</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">47,062</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>overlapping_stream</td>
+              <td class="n">143</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">47,062</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">121</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">47,062</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>overlapping</td>
+              <td class="n">18.2</td>
+              <td class="n">115</td>
+              <td class="n">84.5</td>
+              <td class="n">16.5</td>
+              <td class="n">32.3</td>
+              <td class="n">309,829</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>overlapping_iter</td>
+              <td class="n">58.4</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">309,829</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>standard</td>
+              <td class="n">19.9</td>
+              <td class="n">81.2</td>
+              <td class="n">73.6</td>
+              <td class="n">15.7</td>
+              <td class="n"></td>
+              <td class="n">309,829</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>leftmost_longest</td>
+              <td class="n">18.8</td>
+              <td class="n">90.4</td>
+              <td class="n">10.3</td>
+              <td class="n">15.4</td>
+              <td class="n">30.6</td>
+              <td class="n">309,829</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>replace</td>
+              <td class="n">8.9</td>
+              <td class="n">55.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,518,890</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>standard_stream</td>
+              <td class="n">66.7</td>
+              <td class="n">68.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">309,829</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>overlapping_stream</td>
+              <td class="n">63.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">309,829</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">51.4</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">309,829</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>overlapping</td>
+              <td class="n">2.5</td>
+              <td class="n">43.3</td>
+              <td class="n">23.4</td>
+              <td class="n">1.8</td>
+              <td class="n">5.4</td>
+              <td class="n">3,145,725</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>overlapping_iter</td>
+              <td class="n">27.1</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">3,145,725</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>standard</td>
+              <td class="n">7.5</td>
+              <td class="n">30.2</td>
+              <td class="n">40.3</td>
+              <td class="n">5.3</td>
+              <td class="n"></td>
+              <td class="n">1,048,576</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>leftmost_longest</td>
+              <td class="n">16.4</td>
+              <td class="n">74.7</td>
+              <td class="n">10.5</td>
+              <td class="n">15.4</td>
+              <td class="n">31.0</td>
+              <td class="n">349,526</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>replace</td>
+              <td class="n">8.7</td>
+              <td class="n">73.9</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,398,103</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>standard_stream</td>
+              <td class="n">52.2</td>
+              <td class="n">67.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,048,576</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>overlapping_stream</td>
+              <td class="n">11.5</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">3,145,725</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">37.3</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">349,526</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>overlapping</td>
+              <td class="n">152</td>
+              <td class="n">490</td>
+              <td class="n">127</td>
+              <td class="n">492</td>
+              <td class="n">39.8</td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>overlapping_iter</td>
+              <td class="n">149</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>standard</td>
+              <td class="n">156</td>
+              <td class="n">486</td>
+              <td class="n">127</td>
+              <td class="n">501</td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>leftmost_longest</td>
+              <td class="n">138</td>
+              <td class="n">496</td>
+              <td class="n">128</td>
+              <td class="n">489</td>
+              <td class="n">38.8</td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>is_match</td>
+              <td class="n">149</td>
+              <td class="n">495</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">40.3</td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>replace</td>
+              <td class="n">127</td>
+              <td class="n">465</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,048,576</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>standard_stream</td>
+              <td class="n">156</td>
+              <td class="n">275</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>overlapping_stream</td>
+              <td class="n">148</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">140</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">0</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>overlapping</td>
+              <td class="n">0.4</td>
+              <td class="n">7.2</td>
+              <td class="n">1.5</td>
+              <td class="n">0.3</td>
+              <td class="n">0.9</td>
+              <td class="n">3,999,810</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>overlapping_iter</td>
+              <td class="n">4.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">3,999,810</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>standard</td>
+              <td class="n">9.3</td>
+              <td class="n">30.4</td>
+              <td class="n">41.4</td>
+              <td class="n">5.6</td>
+              <td class="n"></td>
+              <td class="n">200,000</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>leftmost_longest</td>
+              <td class="n">11.1</td>
+              <td class="n">240</td>
+              <td class="n">53.3</td>
+              <td class="n">113</td>
+              <td class="n">150</td>
+              <td class="n">10,000</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">early exit</td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>replace</td>
+              <td class="n">10.0</td>
+              <td class="n">227</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">40,000</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>standard_stream</td>
+              <td class="n">51.6</td>
+              <td class="n">68.1</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">200,000</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>overlapping_stream</td>
+              <td class="n">0.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">3,999,810</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">10.5</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">10,000</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>overlapping</td>
+              <td class="n">3.3</td>
+              <td class="n">45.9</td>
+              <td class="n">27.5</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">196,605</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>overlapping_iter</td>
+              <td class="n">26.3</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">196,605</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>standard</td>
+              <td class="n">12.8</td>
+              <td class="n">31.5</td>
+              <td class="n">42.1</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">65,536</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>leftmost_longest</td>
+              <td class="n">23.8</td>
+              <td class="n">76.5</td>
+              <td class="n">10.3</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">21,846</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>replace</td>
+              <td class="n">8.9</td>
+              <td class="n">74.4</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">87,383</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>standard_stream</td>
+              <td class="n">50.2</td>
+              <td class="n">68.1</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">65,536</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>overlapping_stream</td>
+              <td class="n">10.3</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">196,605</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">38.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">21,846</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>overlapping</td>
+              <td class="n">2.6</td>
+              <td class="n">44.6</td>
+              <td class="n">25.4</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">786,429</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>overlapping_iter</td>
+              <td class="n">26.3</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">786,429</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>standard</td>
+              <td class="n">8.2</td>
+              <td class="n">30.5</td>
+              <td class="n">41.8</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">262,144</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>leftmost_longest</td>
+              <td class="n">13.4</td>
+              <td class="n">74.9</td>
+              <td class="n">9.9</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">87,382</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>replace</td>
+              <td class="n">9.6</td>
+              <td class="n">67.1</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">349,527</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>standard_stream</td>
+              <td class="n">53.0</td>
+              <td class="n">68.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">262,144</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>overlapping_stream</td>
+              <td class="n">10.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">786,429</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">36.8</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">87,382</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>overlapping</td>
+              <td class="n">2.4</td>
+              <td class="n">45.2</td>
+              <td class="n">27.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">3,145,725</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>overlapping_iter</td>
+              <td class="n">26.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">3,145,725</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>standard</td>
+              <td class="n">7.9</td>
+              <td class="n">29.1</td>
+              <td class="n">40.5</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,048,576</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>leftmost_longest</td>
+              <td class="n">16.2</td>
+              <td class="n">74.7</td>
+              <td class="n">10.4</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">349,526</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>replace</td>
+              <td class="n">8.7</td>
+              <td class="n">73.5</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,398,103</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>standard_stream</td>
+              <td class="n">53.8</td>
+              <td class="n">69.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,048,576</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>overlapping_stream</td>
+              <td class="n">11.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">3,145,725</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">37.2</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">349,526</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>overlapping</td>
+              <td class="n">1.5</td>
+              <td class="n">45.4</td>
+              <td class="n">27.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">12,582,909</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>overlapping_iter</td>
+              <td class="n">26.9</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">12,582,909</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>standard</td>
+              <td class="n">7.3</td>
+              <td class="n">30.7</td>
+              <td class="n">41.7</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">4,194,304</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>leftmost_longest</td>
+              <td class="n">15.3</td>
+              <td class="n">74.4</td>
+              <td class="n">10.4</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,398,102</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>is_match</td>
+              <td class="n">early exit</td>
+              <td class="n">early exit</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">found</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>replace</td>
+              <td class="n">7.2</td>
+              <td class="n">65.5</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">5,592,407</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>standard_stream</td>
+              <td class="n">45.5</td>
+              <td class="n">66.6</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">4,194,304</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>overlapping_stream</td>
+              <td class="n">12.3</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">12,582,909</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">37.3</td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n"></td>
+              <td class="n">1,398,102</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Counts rebar records for the Rust crate on the same bytes, against the standard-mode count measured here</caption>
+          <thead>
+            <tr>
+              <th scope="col">workload</th>
+              <th scope="col" class="n">recorded</th>
+              <th scope="col" class="n">measured</th>
+              <th scope="col">result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td class="n">558</td>
+              <td class="n">558</td>
+              <td>reproduced</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td class="n">740</td>
+              <td class="n">740</td>
+              <td>reproduced</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td class="n">582</td>
+              <td class="n">582</td>
+              <td>reproduced</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td class="n">0</td>
+              <td class="n">0</td>
+              <td>reproduced</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td class="n">714</td>
+              <td class="n">714</td>
+              <td>reproduced</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td class="n">15</td>
+              <td class="n">15</td>
+              <td>reproduced</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td class="n">47,062</td>
+              <td class="n">47,062</td>
+              <td>reproduced</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td class="n">309,829</td>
+              <td class="n">309,829</td>
+              <td>reproduced</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Automaton construction, ms</caption>
+          <thead>
+            <tr>
+              <th scope="col">workload</th>
+              <th scope="col" class="n">OCaml</th>
+              <th scope="col" class="n">Rust default</th>
+              <th scope="col" class="n">Rust NFA</th>
+              <th scope="col" class="n">ahocorasick_rs</th>
+              <th scope="col" class="n">pyahocorasick</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td class="n">0.02</td>
+              <td class="n">0.09</td>
+              <td class="n">0.04</td>
+              <td class="n">1.28</td>
+              <td class="n">0.30</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-7</td>
+              <td class="n">0.15</td>
+              <td class="n">0.07</td>
+              <td class="n">0.04</td>
+              <td class="n">0.85</td>
+              <td class="n">0.36</td>
+            </tr>
+            <tr>
+              <td>sherlock/prefixes</td>
+              <td class="n">0.02</td>
+              <td class="n">0.05</td>
+              <td class="n">0.03</td>
+              <td class="n">0.94</td>
+              <td class="n">0.39</td>
+            </tr>
+            <tr>
+              <td>sherlock/absent</td>
+              <td class="n">0.11</td>
+              <td class="n">0.10</td>
+              <td class="n">0.04</td>
+              <td class="n">0.97</td>
+              <td class="n">0.39</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-5000</td>
+              <td class="n">43.43</td>
+              <td class="n">6.55</td>
+              <td class="n">5.34</td>
+              <td class="n">13.63</td>
+              <td class="n">7.37</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td class="n">104.07</td>
+              <td class="n">18.67</td>
+              <td class="n">19.43</td>
+              <td class="n">40.75</td>
+              <td class="n">24.02</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/names-5</td>
+              <td class="n">0.17</td>
+              <td class="n">0.08</td>
+              <td class="n">0.04</td>
+              <td class="n">0.99</td>
+              <td class="n">0.30</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td class="n">29.10</td>
+              <td class="n">3.59</td>
+              <td class="n">3.22</td>
+              <td class="n">8.44</td>
+              <td class="n">4.16</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/byte-a</td>
+              <td class="n">0.01</td>
+              <td class="n">0.04</td>
+              <td class="n">0.04</td>
+              <td class="n">0.81</td>
+              <td class="n">0.32</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td class="n">0.02</td>
+              <td class="n">0.04</td>
+              <td class="n">0.03</td>
+              <td class="n">0.93</td>
+              <td class="n">0.39</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td class="n">0.09</td>
+              <td class="n">0.08</td>
+              <td class="n">0.09</td>
+              <td class="n">0.98</td>
+              <td class="n">0.33</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td class="n">2.04</td>
+              <td class="n">0.89</td>
+              <td class="n">0.20</td>
+              <td class="n">2.40</td>
+              <td class="n">0.47</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td class="n">0.04</td>
+              <td class="n">0.09</td>
+              <td class="n">0.04</td>
+              <td class="n">0.86</td>
+              <td class="n">0.31</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td class="n">0.13</td>
+              <td class="n">0.06</td>
+              <td class="n">0.06</td>
+              <td class="n"></td>
+              <td class="n"></td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td class="n">0.11</td>
+              <td class="n">0.07</td>
+              <td class="n">0.05</td>
+              <td class="n"></td>
+              <td class="n"></td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td class="n">0.09</td>
+              <td class="n">0.07</td>
+              <td class="n">0.05</td>
+              <td class="n"></td>
+              <td class="n"></td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td class="n">0.09</td>
+              <td class="n">0.08</td>
+              <td class="n">0.05</td>
+              <td class="n"></td>
+              <td class="n"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Scaling: ns per byte at growing input sizes (flat means linear time)</caption>
+          <thead>
+            <tr>
+              <th scope="col">workload</th>
+              <th scope="col" class="n">bytes</th>
+              <th scope="col" class="n">OCaml overlapping</th>
+              <th scope="col" class="n">OCaml standard</th>
+              <th scope="col" class="n">OCaml leftmost_longest</th>
+              <th scope="col" class="n">Rust default overlapping</th>
+              <th scope="col" class="n">Rust default standard</th>
+              <th scope="col" class="n">Rust default leftmost_longest</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>scaling/abc-64k</td>
+              <td class="n">65,536</td>
+              <td class="n">304.35</td>
+              <td class="n">77.97</td>
+              <td class="n">41.97</td>
+              <td class="n">21.77</td>
+              <td class="n">31.78</td>
+              <td class="n">13.07</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-256k</td>
+              <td class="n">262,144</td>
+              <td class="n">389.65</td>
+              <td class="n">122.52</td>
+              <td class="n">74.51</td>
+              <td class="n">22.42</td>
+              <td class="n">32.80</td>
+              <td class="n">13.35</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-1m</td>
+              <td class="n">1,048,576</td>
+              <td class="n">409.39</td>
+              <td class="n">125.96</td>
+              <td class="n">61.57</td>
+              <td class="n">22.15</td>
+              <td class="n">34.41</td>
+              <td class="n">13.39</td>
+            </tr>
+            <tr>
+              <td>scaling/abc-4m</td>
+              <td class="n">4,194,304</td>
+              <td class="n">679.14</td>
+              <td class="n">136.17</td>
+              <td class="n">65.51</td>
+              <td class="n">22.05</td>
+              <td class="n">32.59</td>
+              <td class="n">13.44</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+
+      <h2 id="reading">Reading the results</h2>
+
+      <h3 id="reading-sparse">Ordinary text, few patterns</h3>
+
+      <p>
+        On English text where matches are rare &mdash; the Sherlock and
+        OpenSubtitles name workloads &mdash; this library scans at 170 to
+        200&nbsp;MB/s, within fifteen percent of the Rust crate's bare NFA
+        and close to pyahocorasick's C engine. The Rust crate's default
+        configuration is up to sixty times faster on the two- and
+        three-pattern rows because it is not running an automaton at all:
+        its Teddy prefilter looks for candidate bytes with SIMD
+        instructions and only confirms hits with the automaton. That is
+        the gap between a dependency-free OCaml automaton and a vectorised
+        scanner, and it narrows as soon as the prefilter stops paying off:
+        with seven names the default engine is at about 530&nbsp;MB/s, and
+        with 5&nbsp;000 or 15&nbsp;000 words under 100.
+      </p>
+
+      <h3 id="reading-dictionaries">Dictionaries</h3>
+
+      <p>
+        With thousands of patterns the automaton is large and the
+        prefilter is gone, so every engine is bounded by how fast it walks
+        the trie. This library reaches 46&nbsp;MB/s on 15&nbsp;000 words
+        and 82 to 86&nbsp;MB/s on the 2&nbsp;663 long words of
+        <code>dictionary-15</code>: level with or ahead of the Rust NFA,
+        and between half and nine tenths of the Rust default. The first
+        4096 nodes in breadth-first order have dense rows; beyond them a
+        sorted-children lookup and failure links take over, which is where
+        the remaining gap sits. Construction is where the library is
+        clearly slower: about 100&nbsp;ms for 15&nbsp;000 words against
+        the crate's 19, spent filling the dense rows and building the trie
+        through a hash table. It happens once.
+      </p>
+
+      <h3 id="reading-dense">Match-dense inputs</h3>
+
+      <p>
+        When almost every byte ends a match, reporting dominates scanning.
+        <code>find_all</code> returns a list of records, so on
+        <code>dense/abc-1m</code>, with three matches per byte, it keeps
+        three million records live and the garbage collector's work shows:
+        2.5&nbsp;MB/s, against 27&nbsp;MB/s for <code>find_iter</code>,
+        whose records die young, and 43&nbsp;MB/s for the Rust crate,
+        which allocates nothing. The <a href="api.html#recipes">API
+        page</a>'s advice stands: consume dense matches lazily. The
+        leftmost-longest selection no longer pays that cost at all; at
+        16&nbsp;MB/s on the same input it is ahead of the Rust NFA's 10,
+        and its streamed form reaches 37&nbsp;MB/s, a mode the Rust crate
+        does not offer on streams. The pathological row, twenty nested
+        patterns over a run of the same byte, is the same story at twenty
+        matches per byte.
+      </p>
+
+      <h3 id="reading-streams">Streams</h3>
+
+      <p>
+        Feeding the input in 4&nbsp;KiB chunks costs this library nothing:
+        <code>Stream.feed_nonoverlapping</code> runs at 190 to
+        200&nbsp;MB/s on the name workloads, the same as the whole-input
+        search, and faster on dense inputs, where each chunk's result list
+        is short-lived. The Rust crate's <code>stream_find_iter</code>
+        reads through a buffer and runs at 250 to 290&nbsp;MB/s however
+        fast its whole-input search is, so on streams the two are within
+        a factor of two everywhere and level on the dictionary rows.
+      </p>
+
+      <h3 id="reading-scaling">Linear time</h3>
+
+      <p>
+        The scaling rows run the same 39 patterns over 64&nbsp;KiB to
+        4&nbsp;MiB of the same random text. <code>find_iter</code> holds at
+        26 to 27&nbsp;MB/s across the four sizes: the automaton's cost per
+        byte is constant, as the <a href="api.html#cost">amortised
+        argument</a> says it must be. The list-returning modes slow down as
+        the input grows &mdash; <code>find_all</code> from 304 to 679
+        nanoseconds per byte &mdash; because their result grows with it
+        and a larger live heap makes each collection dearer. That is the
+        price of the result, not of the scan.
+      </p>
+
+      <h2 id="before-after">Before and after</h2>
+
+      <p>
+        The first run of this suite was against the version of the library
+        that stored transitions in a hash table and selected
+        leftmost-longest matches by materialising every overlapping match
+        and sorting. Those numbers are the reason the transition table and
+        the selection were rewritten (the
+        <a href="api.html#cost">cost section of the API page</a> describes
+        what the library does now); the semantics did not change, which the
+        <a href="compatibility.html#differential">differential test</a>
+        confirmed byte for byte before and after.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Throughput before and after, MB/s</caption>
+          <thead>
+            <tr>
+              <th scope="col">workload</th>
+              <th scope="col">mode</th>
+              <th scope="col" class="n">before, MB/s</th>
+              <th scope="col" class="n">after, MB/s</th>
+              <th scope="col" class="n">ratio</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>overlapping</td>
+              <td class="n">51.9</td>
+              <td class="n">174</td>
+              <td class="n">3.4x</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>overlapping_iter</td>
+              <td class="n">49.8</td>
+              <td class="n">176</td>
+              <td class="n">3.5x</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>standard</td>
+              <td class="n">63.3</td>
+              <td class="n">182</td>
+              <td class="n">2.9x</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>leftmost_longest</td>
+              <td class="n">52.8</td>
+              <td class="n">153</td>
+              <td class="n">2.9x</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>replace</td>
+              <td class="n">43.4</td>
+              <td class="n">135</td>
+              <td class="n">3.1x</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>standard_stream</td>
+              <td class="n">65.3</td>
+              <td class="n">189</td>
+              <td class="n">2.9x</td>
+            </tr>
+            <tr>
+              <td>sherlock/names-2</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">43.4</td>
+              <td class="n">153</td>
+              <td class="n">3.5x</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>overlapping</td>
+              <td class="n">9.5</td>
+              <td class="n">45.9</td>
+              <td class="n">4.8x</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>overlapping_iter</td>
+              <td class="n">10.4</td>
+              <td class="n">44.1</td>
+              <td class="n">4.2x</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>standard</td>
+              <td class="n">10.7</td>
+              <td class="n">46.9</td>
+              <td class="n">4.4x</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>leftmost_longest</td>
+              <td class="n">9.1</td>
+              <td class="n">44.1</td>
+              <td class="n">4.8x</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>replace</td>
+              <td class="n">9.6</td>
+              <td class="n">42.5</td>
+              <td class="n">4.4x</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>standard_stream</td>
+              <td class="n">10.3</td>
+              <td class="n">49.7</td>
+              <td class="n">4.8x</td>
+            </tr>
+            <tr>
+              <td>sherlock/words-15000</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">9.6</td>
+              <td class="n">47.7</td>
+              <td class="n">4.9x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>overlapping</td>
+              <td class="n">12.8</td>
+              <td class="n">82.3</td>
+              <td class="n">6.4x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>overlapping_iter</td>
+              <td class="n">12.2</td>
+              <td class="n">83.6</td>
+              <td class="n">6.9x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>standard</td>
+              <td class="n">12.6</td>
+              <td class="n">86.4</td>
+              <td class="n">6.9x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>leftmost_longest</td>
+              <td class="n">12.6</td>
+              <td class="n">83.9</td>
+              <td class="n">6.7x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>replace</td>
+              <td class="n">11.5</td>
+              <td class="n">78.9</td>
+              <td class="n">6.9x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>standard_stream</td>
+              <td class="n">12.6</td>
+              <td class="n">85.3</td>
+              <td class="n">6.8x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/dictionary-15</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">12.1</td>
+              <td class="n">82.7</td>
+              <td class="n">6.8x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>overlapping</td>
+              <td class="n">11.9</td>
+              <td class="n">18.2</td>
+              <td class="n">1.5x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>overlapping_iter</td>
+              <td class="n">26.2</td>
+              <td class="n">58.4</td>
+              <td class="n">2.2x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>standard</td>
+              <td class="n">15.6</td>
+              <td class="n">19.9</td>
+              <td class="n">1.3x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>leftmost_longest</td>
+              <td class="n">4.9</td>
+              <td class="n">18.8</td>
+              <td class="n">3.8x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>replace</td>
+              <td class="n">3.9</td>
+              <td class="n">8.9</td>
+              <td class="n">2.3x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>standard_stream</td>
+              <td class="n">32.7</td>
+              <td class="n">66.7</td>
+              <td class="n">2.0x</td>
+            </tr>
+            <tr>
+              <td>opensubtitles/bytes-8</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">0.7</td>
+              <td class="n">51.4</td>
+              <td class="n">77.1x</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>overlapping</td>
+              <td class="n">1.7</td>
+              <td class="n">2.5</td>
+              <td class="n">1.4x</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>overlapping_iter</td>
+              <td class="n">11.6</td>
+              <td class="n">27.1</td>
+              <td class="n">2.3x</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>standard</td>
+              <td class="n">6.4</td>
+              <td class="n">7.5</td>
+              <td class="n">1.2x</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>leftmost_longest</td>
+              <td class="n">0.6</td>
+              <td class="n">16.4</td>
+              <td class="n">27.0x</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>replace</td>
+              <td class="n">0.6</td>
+              <td class="n">8.7</td>
+              <td class="n">14.5x</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>standard_stream</td>
+              <td class="n">16.8</td>
+              <td class="n">52.2</td>
+              <td class="n">3.1x</td>
+            </tr>
+            <tr>
+              <td>dense/abc-1m</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">0.1</td>
+              <td class="n">37.3</td>
+              <td class="n">732.0x</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>overlapping</td>
+              <td class="n">18.3</td>
+              <td class="n">152</td>
+              <td class="n">8.3x</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>overlapping_iter</td>
+              <td class="n">17.2</td>
+              <td class="n">149</td>
+              <td class="n">8.7x</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>standard</td>
+              <td class="n">19.4</td>
+              <td class="n">156</td>
+              <td class="n">8.0x</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>leftmost_longest</td>
+              <td class="n">18.4</td>
+              <td class="n">138</td>
+              <td class="n">7.5x</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>replace</td>
+              <td class="n">16.7</td>
+              <td class="n">127</td>
+              <td class="n">7.6x</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>standard_stream</td>
+              <td class="n">18.9</td>
+              <td class="n">156</td>
+              <td class="n">8.3x</td>
+            </tr>
+            <tr>
+              <td>sparse/bytes-1m</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">17.8</td>
+              <td class="n">140</td>
+              <td class="n">7.9x</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>overlapping</td>
+              <td class="n">0.4</td>
+              <td class="n">0.4</td>
+              <td class="n">1.1x</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>overlapping_iter</td>
+              <td class="n">2.6</td>
+              <td class="n">4.6</td>
+              <td class="n">1.7x</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>standard</td>
+              <td class="n">7.4</td>
+              <td class="n">9.3</td>
+              <td class="n">1.2x</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>leftmost_longest</td>
+              <td class="n">0.1</td>
+              <td class="n">11.1</td>
+              <td class="n">138.1x</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>replace</td>
+              <td class="n">0.1</td>
+              <td class="n">10.0</td>
+              <td class="n">129.2x</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>standard_stream</td>
+              <td class="n">23.4</td>
+              <td class="n">51.6</td>
+              <td class="n">2.2x</td>
+            </tr>
+            <tr>
+              <td>pathological/suffixes</td>
+              <td>leftmost_longest_stream</td>
+              <td class="n">0.0</td>
+              <td class="n">10.5</td>
+              <td class="n">740.2x</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="not-measured">What is not measured</h2>
+
+      <dl>
+        <dt><strong>Memory</strong></dt>
+        <dd>
+          Automaton size and peak allocation during a scan are not
+          recorded. The dense transition rows cost 2&nbsp;KiB per node for
+          up to 4096 nodes; a 15&nbsp;000-word automaton is a few megabytes.
+        </dd>
+        <dt><strong>Latency</strong></dt>
+        <dd>
+          Streamed modes are timed for throughput over 4&nbsp;KiB chunks,
+          not for the delay between a byte arriving and a match being
+          reported, which the <a href="semantics.html#streaming">semantics
+          page</a> bounds rather than measures.
+        </dd>
+        <dt><strong>Small inputs</strong></dt>
+        <dd>
+          Every haystack is at least 200&nbsp;KB, so per-call overhead
+          &mdash; the cost of <code>find_all</code> on a 40-byte log line
+          &mdash; does not show.
+        </dd>
+        <dt><strong>Other implementations</strong></dt>
+        <dd>
+          Hyperscan, daachorse and the Go and Java libraries are not in the
+          table. The drivers speak the format described in
+          <code>bench/README.md</code>; adding one is a matter of writing a
+          driver.
+        </dd>
+      </dl>
+
+      <p>
+        <code>./bench/run.sh</code> reproduces everything on this page, and
+        <code>bench/README.md</code> documents the workloads and the
+        method. Back to <a href="correctness.html">correctness</a>, or on
+        to <a href="compatibility.html">compatibility</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/thevilledev/ocaml-aho-corasick">github.com/thevilledev/ocaml-aho-corasick</a>
+        &middot; <a href="https://ville.dev/ocaml-aho-corasick/api/">API documentation</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">issues</a>
+      </p>
+    </footer>
+  </body>
+</html>

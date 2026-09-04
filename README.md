@@ -26,7 +26,12 @@ tagging. Pure OCaml, zero dependencies.
 Correctness is anchored by QCheck oracles: `find_all` is compared
 against a naive per-pattern scan across thousands of random
 pattern-set/input combinations, and each streaming mode across random
-chunk splits must equal its whole-input counterpart.
+chunk splits must equal its whole-input counterpart. Compatibility is
+checked, not assumed: the Rust `aho-corasick` crate's own test vectors
+are part of the test suite, and a differential harness runs this
+library, the Rust crate and pyahocorasick over 20 000 generated cases
+in CI (see [Compatibility](#compatibility-with-other-implementations)
+and [Performance](#performance)).
 
 ## Documentation
 
@@ -116,11 +121,58 @@ one-to-one, and the streaming APIs differ in what they can express.
   and `replace_all` — to streams, which Rust's streams cannot do at
   all.
 
+## Compatibility with other implementations
+
+Two things make the agreement with other libraries a test result rather
+than a reading of their documentation:
+
+- `test/test_conformance.ml` runs other implementations' test vectors
+  through this library: the Rust `aho-corasick` crate's table-driven
+  tests (every match kind offered here, case folding, regressions, and
+  its documentation examples), daachorse's additions to them,
+  pyahocorasick's `iter_long` regression cases, and the vectors this
+  library documents. Each vector is checked whole-input, lazily, and
+  streamed over 1- and 3-byte chunks.
+- `compat/` is a differential harness: one driver each for this
+  library, the Rust crate, pyahocorasick and ahocorasick_rs reads the
+  same 20 000 generated cases and the outputs are compared byte for
+  byte. It runs in CI. Against the Rust crate 1.1.5 every mode is
+  identical in every case, order included; pyahocorasick's `iter()`
+  is identical too, and its `iter_long()` turned out to miss matches
+  (details and reproducers in [compat/README.md](compat/README.md)).
+
+## Performance
+
+`bench/` measures throughput on the corpora of the Rust crate's rebar
+benchmark suite (Sherlock Holmes, OpenSubtitles, English word lists)
+and on synthetic dense, sparse and pathological inputs, for this
+library, the Rust crate (default configuration and bare NFA),
+pyahocorasick and ahocorasick_rs, and cross-checks the match counts
+between them and against the counts rebar records. Results and method
+are on the [performance page](https://ville.dev/ocaml-aho-corasick/performance.html);
+`./bench/run.sh` reproduces them. A few rows, in MB/s on one core of a
+shared cloud VM:
+
+| workload | mode | this library | Rust NFA | Rust default | pyahocorasick |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Sherlock Holmes, 2 names | standard | 182 | 214 | 11,071 | 231 |
+| Sherlock Holmes, 15 000 words | standard | 47 | 59 | 86 | 29 |
+| OpenSubtitles, 2 663 long words | leftmost-longest | 84 | 71 | 98 | 35 |
+| random `abc` text, 39 patterns, 3 matches per byte | leftmost-longest | 16 | 10 | 75 | 31 |
+| the same | `find_iter` | 27 | 23 | 43 | 5.4 |
+
+The Rust default column runs a SIMD prefilter where it can, which is
+the gap on the first row; "Rust NFA" is the same crate's automaton
+alone. Match-dense inputs are where `find_all`'s list of records costs
+the most, and where `find_iter` should be used instead.
+
 ## Notes
 
 - Matching is byte-oriented; UTF-8 input works as byte matching
   (`?ignore_case` folds ASCII letters only).
-- Construction is O(total pattern length); matching is
+- Construction is O(total pattern length) plus a 256-entry transition
+  row for each of the shallowest nodes (at most 4096 of them, so small
+  pattern sets become full DFAs); matching is
   O(input + number of matches) via failure and dictionary-suffix links.
 - Match reporting order for `find_all`: by end offset; ties longest
   first.
