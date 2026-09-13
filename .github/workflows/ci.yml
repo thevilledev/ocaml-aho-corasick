@@ -24,6 +24,9 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          opam-repositories: |
+            default: https://opam.ocaml.org
+          opam-disable-sandboxing: true
       - run: opam install . --deps-only --with-test --with-doc
       - run: opam lint --warnings=@1..999 aho-corasick.opam
       - run: opam exec -- dune build @all @doc
@@ -51,16 +54,13 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "4.14.0"
+          opam-repositories: |
+            default: https://opam.ocaml.org
+          opam-disable-sandboxing: true
       - name: Install minimum dependencies
-        run: >-
-          opam install
-          .
-          --deps-only
-          --with-test
-          dune.3.17.2
-          alcotest.1.5.0
-          qcheck-core.0.25
-          qcheck-alcotest.0.25
+        run: |
+          opam install dune.3.17.2 alcotest.1.5.0 qcheck-core.0.25 qcheck-alcotest.0.25
+          opam install . --deps-only --with-test
       - run: opam exec -- dune build @all
       - run: opam exec -- dune runtest
 
@@ -75,6 +75,9 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.4"
+          opam-repositories: |
+            default: https://opam.ocaml.org
+          opam-disable-sandboxing: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
