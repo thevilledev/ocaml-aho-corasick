@@ -21,7 +21,41 @@ let naive patterns text =
          List.rev !acc)
        patterns)
 
-let norm = List.sort compare
+let ordered_naive patterns text =
+  List.sort
+    (fun a b -> compare (a.stop, a.start, a.pattern) (b.stop, b.start, b.pattern))
+    (naive patterns text)
+
+(* Independent selection: try each pattern at each input position, then
+   skip the chosen span. This does not sort or use automaton matches. *)
+let leftmost_reference patterns text =
+  let n = String.length text in
+  let rec scan_at pos acc =
+    if pos >= n then List.rev acc
+    else begin
+      let best = ref None in
+      List.iteri
+        (fun pi p ->
+          let len = String.length p in
+          if pos + len <= n && String.sub text pos len = p then
+            match !best with
+            | Some mt when mt.stop - mt.start >= len -> ()
+            | _ -> best := Some (m pi pos (pos + len)))
+        patterns;
+      match !best with
+      | None -> scan_at (pos + 1) acc
+      | Some mt -> scan_at mt.stop (mt :: acc)
+    end
+  in
+  scan_at 0 []
+
+let replace_reference text selected f =
+  let rec pieces pos = function
+    | [] -> [String.sub text pos (String.length text - pos)]
+    | mt :: rest ->
+      String.sub text pos (mt.start - pos) :: f mt :: pieces mt.stop rest
+  in
+  String.concat "" (pieces 0 selected)
 
 (* ---------- classic cases ---------- *)
 
@@ -77,7 +111,7 @@ let test_leftmost_longest () =
   let t = build [ "a"; "abc"; "b"; "bcd" ] in
   Alcotest.check matches "prefers longest at leftmost start"
     [ m 1 0 3 ]
-    (find_leftmost_longest t "abcd" |> List.filter (fun x -> x.stop <= 3));
+    (find_leftmost_longest t "abcd");
   let t2 = build [ "ab"; "bc" ] in
   Alcotest.check matches "greedy left" [ m 0 0 2 ] (find_leftmost_longest t2 "abc");
   let t3 = build [ "b"; "ba" ] in
@@ -165,16 +199,67 @@ let test_stream_replace () =
     (o1 ^ o2 ^ o3);
   Alcotest.(check string) "longest wins across chunks" "say [X] [X]" (o1 ^ o2 ^ o3)
 
+let test_stream_ties_and_flush () =
+  let t = build ~ignore_case:true [ "a"; "BA"; "ba" ] in
+  let st, all = Stream.feed t (Stream.start t) "ba" in
+  Alcotest.check matches "same end: longest then pattern ID"
+    [m 1 0 2; m 2 0 2; m 0 1 2] all;
+  Alcotest.(check int) "original state can be reused" 2 (Stream.pos st);
+  let _, earliest = Stream.feed_nonoverlapping t (Stream.start t) "ba" in
+  Alcotest.check matches "earliest tie" [m 1 0 2] earliest;
+  Alcotest.check matches "whole-input tie" [m 1 0 2] (find_leftmost_longest t "ba");
+  let module L = Stream.Leftmost_longest in
+  let t = build [ "a"; "abcd" ] in
+  let old = L.start t in
+  let st, ms = L.feed t old "a" in
+  Alcotest.check matches "still undecided" [] ms;
+  Alcotest.check matches "final short match" [m 0 0 1] (L.flush st);
+  let _, branched = L.feed t old "abcd" in
+  Alcotest.check matches "reuse immutable initial state" [m 1 0 4] branched;
+  let module R = Stream.Replace in
+  let rst = R.start t ~f:(fun _ -> "X") in
+  let rst, out = R.feed t rst "abc" in
+  Alcotest.(check string) "flush preserves unmatched suffix" "Xbc"
+    (out ^ R.flush rst);
+  let empty = build [] in
+  let rst, out = R.feed empty (R.start empty ~f:(fun _ -> assert false)) "a\000b" in
+  Alcotest.(check string) "empty automaton passes input through" "a\000b"
+    (out ^ R.flush rst)
+
+let test_binary_and_empty_input () =
+  let t = build ~ignore_case:true [ "\000\255"; "A"; "\195\132" ] in
+  Alcotest.check matches "binary bytes and ASCII folding"
+    [m 0 0 2; m 1 2 3; m 2 3 5]
+    (find_all t "\000\255a\195\132\195\164");
+  Alcotest.(check string) "original spelling" "A" (pattern t 1);
+  Alcotest.check matches "empty input" [] (find_all t "");
+  Alcotest.check matches "empty lazy input" [] (List.of_seq (find_iter t ""));
+  Alcotest.(check bool) "empty membership" false (mem t "");
+  Alcotest.check_raises "negative index"
+    (Invalid_argument "Aho_corasick.pattern: index out of bounds")
+    (fun () -> ignore (pattern t (-1)))
+
+let test_stream_dense_chunk () =
+  let t = build [ "a"; "aa"; "aaa" ] in
+  let text = String.make 30000 'a' in
+  let module L = Stream.Leftmost_longest in
+  let st, selected = L.feed t (L.start t) text in
+  let selected = selected @ L.flush st in
+  Alcotest.(check int) "all disjoint triples selected" 10000 (List.length selected);
+  List.iteri
+    (fun i mt -> Alcotest.check match_t "triple span" (m 2 (3 * i) (3 * i + 3)) mt)
+    selected
+
 (* ---------- properties ---------- *)
 
 let gen_pattern = QCheck2.Gen.(string_size ~gen:(char_range 'a' 'c') (1 -- 3))
 let gen_text n = QCheck2.Gen.(string_size ~gen:(char_range 'a' 'c') (0 -- n))
 
 let prop_oracle =
-  QCheck2.Test.make ~name:"find_all = naive scan" ~count:1000
+  QCheck2.Test.make ~name:"find_all = ordered naive scan" ~count:1000
     QCheck2.Gen.(pair (list_size (1 -- 5) gen_pattern) (gen_text 60))
     (fun (ps, text) ->
-      norm (find_all (build ps) text) = norm (naive ps text))
+      find_all (build ps) text = ordered_naive ps text)
 
 (* Split [text] at [sizes] (whatever remains becomes a final chunk,
    so empty chunks and empty tails are exercised too) and feed the
@@ -208,16 +293,15 @@ let prop_stream =
       in
       ms = find_all t text)
 
-(* Reference for [Stream.feed_nonoverlapping]: greedy earliest-end over
-   find_all's ordering (end offset ascending; longest first per end). *)
-let nonoverlapping_reference t text =
+(* Greedy earliest-end selection over the independent reference scan. *)
+let nonoverlapping_reference patterns text =
   let rec go last acc = function
     | [] -> List.rev acc
     | mt :: rest ->
       if mt.start >= last then go mt.stop (mt :: acc) rest
       else go last acc rest
   in
-  go 0 [] (find_all t text)
+  go 0 [] (ordered_naive patterns text)
 
 let prop_stream_nonoverlapping =
   QCheck2.Test.make ~name:"chunked non-overlapping = greedy earliest-end"
@@ -228,7 +312,7 @@ let prop_stream_nonoverlapping =
           (Stream.feed_nonoverlapping t)
           ( @ ) [] (Stream.start t) text sizes
       in
-      ms = nonoverlapping_reference t text)
+      ms = nonoverlapping_reference ps text)
 
 let prop_stream_leftmost_longest =
   QCheck2.Test.make ~name:"chunked leftmost-longest = whole input" ~count:500
@@ -250,21 +334,52 @@ let prop_stream_replace =
       let st, out = feed_chunked (R.feed t) ( ^ ) "" (R.start t ~f) text sizes in
       out ^ R.flush st = replace_all t ~f text)
 
-let prop_leftmost_longest_sound =
-  QCheck2.Test.make ~name:"leftmost-longest is non-overlapping and maximal"
-    ~count:500
-    QCheck2.Gen.(pair (list_size (1 -- 5) gen_pattern) (gen_text 60))
+let prop_leftmost_longest_oracle =
+  QCheck2.Test.make ~name:"leftmost-longest = independent selection"
+    ~count:1000
+    QCheck2.Gen.(pair (list_size (0 -- 5) gen_pattern) (gen_text 60))
     (fun (ps, text) ->
-      let t = build ps in
-      let sel = find_leftmost_longest t text in
-      let all = find_all t text in
-      (* non-overlapping, in order *)
-      let rec ordered = function
-        | a :: (b :: _ as rest) -> a.stop <= b.start && ordered rest
-        | _ -> true
+      find_leftmost_longest (build ps) text = leftmost_reference ps text)
+
+let prop_binary_modes =
+  let open QCheck2.Gen in
+  let byte = oneof [char_range 'a' 'c'; char_range 'A' 'C'; char_range '\000' '\255'] in
+  let pattern = string_size ~gen:byte (1 -- 6) in
+  let cases =
+    pair bool
+      (triple (list_size (0 -- 5) pattern)
+         (string_size ~gen:byte (0 -- 80))
+         (list_size (0 -- 8) (0 -- 20)))
+  in
+  QCheck2.Test.make ~name:"all modes = binary and folded oracles" ~count:1000
+    cases (fun (ignore_case, (ps, text, sizes)) ->
+      let t = build ~ignore_case ps in
+      let fold s = if ignore_case then String.lowercase_ascii s else s in
+      let folded_ps = List.map fold ps and folded_text = fold text in
+      let all = ordered_naive folded_ps folded_text in
+      let selected = leftmost_reference folded_ps folded_text in
+      let _, overlaps =
+        feed_chunked (Stream.feed t) ( @ ) [] (Stream.start t) text sizes
       in
-      (* every selected match is a real match *)
-      ordered sel && List.for_all (fun x -> List.mem x all) sel)
+      let _, earliest =
+        feed_chunked (Stream.feed_nonoverlapping t) ( @ ) []
+          (Stream.start t) text sizes
+      in
+      let module L = Stream.Leftmost_longest in
+      let state, longest = feed_chunked (L.feed t) ( @ ) [] (L.start t) text sizes in
+      let module R = Stream.Replace in
+      let f mt = if mt.pattern mod 2 = 0 then "" else "[replacement]" in
+      let rstate, output =
+        feed_chunked (R.feed t) ( ^ ) "" (R.start t ~f) text sizes
+      in
+      let expected = replace_reference text selected f in
+      find_all t text = all && List.of_seq (find_iter t text) = all
+      && mem t text = (all <> []) && overlaps = all
+      && earliest = nonoverlapping_reference folded_ps folded_text
+      && find_leftmost_longest t text = selected
+      && longest @ L.flush state = selected
+      && replace_all t ~f text = expected && output ^ R.flush rstate = expected
+      && L.pos state = String.length text && R.pos rstate = String.length text)
 
 let () =
   Alcotest.run "aho-corasick"
@@ -277,6 +392,7 @@ let () =
           Alcotest.test_case "empty inputs" `Quick test_empty_patterns;
           Alcotest.test_case "pattern accessors" `Quick test_pattern_accessors;
           Alcotest.test_case "ignore_case" `Quick test_ignore_case;
+          Alcotest.test_case "binary and empty input" `Quick test_binary_and_empty_input;
         ] );
       ( "leftmost-longest",
         [
@@ -291,6 +407,8 @@ let () =
           Alcotest.test_case "leftmost-longest" `Quick
             test_stream_leftmost_longest;
           Alcotest.test_case "replace" `Quick test_stream_replace;
+          Alcotest.test_case "ties, flush, and state reuse" `Quick test_stream_ties_and_flush;
+          Alcotest.test_case "dense chunk" `Quick test_stream_dense_chunk;
         ] );
       ( "properties",
         List.map QCheck_alcotest.to_alcotest
@@ -300,6 +418,7 @@ let () =
             prop_stream_nonoverlapping;
             prop_stream_leftmost_longest;
             prop_stream_replace;
-            prop_leftmost_longest_sound;
+            prop_leftmost_longest_oracle;
+            prop_binary_modes;
           ] );
     ]

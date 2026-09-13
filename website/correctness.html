@@ -3,378 +3,69 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="How ocaml-aho-corasick is checked: a QCheck oracle against a naive per-pattern scan, a streaming equivalence property, worked examples, and an honest account of what none of it covers.">
+    <meta name="description" content="How the library is checked with unit tests, independent reference scans, and random chunk splits.">
     <meta name="theme-color" content="#ffffff">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Correctness">
-    <meta property="og:description" content="The oracle, the properties, the worked examples — and what they do not cover.">
+    <meta property="og:title" content="Testing">
+    <meta property="og:description" content="How the library is checked with unit tests, independent reference scans, and random chunk splits.">
     <meta property="og:url" content="https://ville.dev/ocaml-aho-corasick/correctness.html">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Correctness">
-    <meta name="twitter:description" content="The oracle, the properties, the worked examples — and what they do not cover.">
+    <meta name="twitter:title" content="Testing">
+    <meta name="twitter:description" content="How the library is checked with unit tests, independent reference scans, and random chunk splits.">
     <link rel="canonical" href="https://ville.dev/ocaml-aho-corasick/correctness.html">
-    <link rel="stylesheet" href="styles.css?v=20260901">
-    <title>Correctness &mdash; ocaml-aho-corasick</title>
+    <link rel="stylesheet" href="styles.css?v=0.1.0">
+    <title>Testing — ocaml-aho-corasick</title>
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
     <nav class="top" aria-label="Primary navigation">
-      [ <a href="index.html">overview</a> |
-      <a href="api.html">api</a> |
-      <a href="semantics.html">semantics</a> |
-      <a href="compatibility.html">compatibility</a> |
-      correctness |
-      <a href="performance.html">performance</a> |
-      <a href="https://github.com/thevilledev/ocaml-aho-corasick">source</a> ]
+        <a href="index.html">Overview</a>
+        <a href="api.html">Usage</a>
+        <a href="semantics.html">Match rules</a>
+        <a href="compatibility.html">Compatibility</a>
+        <a href="correctness.html" aria-current="page">Testing</a>
+        <a href="performance.html">Performance</a>
     </nav>
-
     <main id="content">
-      <h1>Correctness</h1>
-
-      <p>
-        An Aho&ndash;Corasick automaton is easy to get almost right. A missing
-        dictionary-suffix link loses nested matches and nothing else; a
-        failure link computed from the wrong node loses matches only when two
-        patterns share a particular suffix; an off-by-one in the offset
-        arithmetic is invisible until someone redacts a secret and leaves its
-        last byte behind. All three survive a test suite of hand-written
-        examples, because hand-written examples test the cases the author
-        already thought of.
-      </p>
-
-      <p>
-        So the primary check here is not an example. It is an oracle: a second,
-        obviously-correct implementation, and a generator that keeps proposing
-        inputs on which the two must agree.
-      </p>
-
-      <h2 id="oracle">The oracle</h2>
-
-      <p>
-        The reference implementation is a naive per-pattern scan &mdash; for
-        each pattern, try it at every offset. It is quadratic and useless in
-        production, which is precisely why it is trustworthy: there is no
-        automaton, no failure link and no shared state to get wrong.
-      </p>
-
-      <pre><code>(* test/test_aho_corasick.ml *)
-let naive patterns text =
-  List.concat
-    (List.mapi
-       (fun pi p -&gt;
-         let lp = String.length p and n = String.length text in
-         let acc = ref [] in
-         for i = 0 to n - lp do
-           if String.sub text i lp = p then acc := m pi i (i + lp) :: !acc
-         done;
-         List.rev !acc)
-       patterns)</code></pre>
-
-      <p>
-        QCheck then generates pattern sets and inputs and asserts that
-        <code>find_all</code> and <code>naive</code> return the same matches.
-      </p>
-
-      <div class="table-scroll">
-        <table>
-          <caption>The six properties, run on every CI run</caption>
-          <thead>
-            <tr>
-              <th scope="col">Property</th>
-              <th scope="col" class="n">Cases</th>
-              <th scope="col">Asserts</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>find_all = naive scan</code></td>
-              <td class="n">1000</td>
-              <td>The same set of matches as the reference implementation.</td>
-            </tr>
-            <tr>
-              <td><code>chunked streaming = whole input</code></td>
-              <td class="n">500</td>
-              <td>
-                Feeding the input in random chunks and concatenating the
-                results gives exactly <code>find_all</code> of the whole
-                input, as a list, in order.
-              </td>
-            </tr>
-            <tr>
-              <td><code>chunked non-overlapping = greedy earliest-end</code></td>
-              <td class="n">500</td>
-              <td>
-                <code>Stream.feed_nonoverlapping</code> over random chunks
-                equals the greedy earliest-end selection computed from
-                <code>find_all</code>.
-              </td>
-            </tr>
-            <tr>
-              <td><code>chunked leftmost-longest = whole input</code></td>
-              <td class="n">500</td>
-              <td>
-                <code>Stream.Leftmost_longest</code> over random chunks, plus
-                <code>flush</code>, equals <code>find_leftmost_longest</code>.
-              </td>
-            </tr>
-            <tr>
-              <td><code>chunked replace = replace_all</code></td>
-              <td class="n">500</td>
-              <td>
-                <code>Stream.Replace</code> over random chunks, with shrinking,
-                growing and deleting replacements, equals
-                <code>replace_all</code>.
-              </td>
-            </tr>
-            <tr>
-              <td><code>leftmost-longest selection</code></td>
-              <td class="n">500</td>
-              <td>
-                The selection is ordered and non-overlapping, and every
-                selected match is a real match.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <h3 id="generators">Why the generators look so small</h3>
-
-      <p>
-        Patterns are 1 to 3 bytes drawn from <code>{a, b, c}</code>, there are
-        1 to 5 of them, and inputs are up to 60 bytes from the same three
-        letters. That looks like weak testing and is the opposite of it. A
-        three-letter alphabet with short patterns maximises the density of the
-        things that break Aho&ndash;Corasick implementations: patterns that are
-        suffixes of other patterns, patterns that overlap themselves, several
-        patterns ending at the same offset, and constant traffic down the
-        failure links. Over a realistic alphabet, a random 60-byte input would
-        contain almost no matches at all, and a thousand such cases would test
-        nothing.
-      </p>
-
-      <p>
-        When a property does fail, QCheck shrinks the counterexample before
-        reporting it, so what lands in the CI log is a minimal pattern set and
-        input rather than the 60-byte case that happened to trip it.
-      </p>
-
-      <h2 id="examples">The worked examples</h2>
-
-      <p>
-        Thirteen Alcotest cases pin down the behaviour the oracle cannot see,
-        starting with the canonical pattern set from the original 1975
-        paper.
-      </p>
-
-      <div class="table-scroll">
-        <table>
-          <caption>What each example is for</caption>
-          <thead>
-            <tr>
-              <th scope="col">Group</th>
-              <th scope="col">Case</th>
-              <th scope="col">Pins down</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td rowspan="6">classic</td>
-              <td><code>ushers</code></td>
-              <td>The canonical pattern set, and the exact report order.</td>
-            </tr>
-            <tr>
-              <td><code>overlapping</code></td>
-              <td>Self-overlap, and nesting at a single end offset.</td>
-            </tr>
-            <tr>
-              <td><code>duplicate patterns</code></td>
-              <td>Both indices reported, ascending.</td>
-            </tr>
-            <tr>
-              <td><code>empty inputs</code></td>
-              <td>Empty pattern list matches nothing; empty pattern raises.</td>
-            </tr>
-            <tr>
-              <td><code>pattern accessors</code></td>
-              <td><code>pattern_count</code>, <code>pattern</code>, and the out-of-bounds exception.</td>
-            </tr>
-            <tr>
-              <td><code>ignore_case</code></td>
-              <td>ASCII folding on, and case sensitivity when off.</td>
-            </tr>
-            <tr>
-              <td rowspan="2">leftmost-longest</td>
-              <td><code>selection</code></td>
-              <td>Leftmost beats longest; longest breaks ties at one start.</td>
-            </tr>
-            <tr>
-              <td><code>replace_all</code></td>
-              <td>Non-overlapping replacement, and untouched input when nothing matches.</td>
-            </tr>
-            <tr>
-              <td rowspan="5">streaming</td>
-              <td><code>find_iter</code></td>
-              <td>Identical to <code>find_all</code>, and lazy enough to stop early.</td>
-            </tr>
-            <tr>
-              <td><code>chunk boundary</code></td>
-              <td>A match spanning two feeds, with absolute offsets, and <code>pos</code>.</td>
-            </tr>
-            <tr>
-              <td><code>non-overlapping</code></td>
-              <td>Scanning restarts after a match, across a chunk boundary; earliest end wins on <code>Samwise</code>.</td>
-            </tr>
-            <tr>
-              <td><code>leftmost-longest</code></td>
-              <td>A shorter match is held back while a longer one may still form, and released by <code>flush</code>; matches nothing can outrank are not held back.</td>
-            </tr>
-            <tr>
-              <td><code>replace</code></td>
-              <td>Streamed replacement equals <code>replace_all</code>, with the longest match winning across a chunk boundary.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <p>
-        The report order is the part carried entirely by these examples. The
-        oracle compares match <em>sets</em> &mdash; both sides are sorted before
-        comparison, because the naive scan produces matches grouped by pattern
-        rather than by offset &mdash; so a change to the ordering rules would
-        slip past all 1000 generated cases and be caught by
-        <code>ushers</code> and <code>overlapping</code> instead.
-      </p>
-
-      <h2 id="vectors">Other implementations' vectors</h2>
-
-      <p>
-        A second Alcotest suite, <code>test/test_conformance.ml</code>, runs
-        the test vectors of other implementations through this library: the
-        Rust <code>aho-corasick</code> crate's own tables (its
-        <code>BASICS</code>, <code>STANDARD</code>,
-        <code>NON_OVERLAPPING</code>, <code>OVERLAPPING</code>,
-        <code>LEFTMOST</code>, <code>LEFTMOST_LONGEST</code>, case-insensitive
-        and regression tables, and its standalone regression tests), the
-        vectors daachorse adds to the same tables, pyahocorasick's
-        <code>iter_long</code> regression cases, the examples in the Rust
-        crate's API documentation, and the vectors on the
-        <a href="compatibility.html#vectors">compatibility page</a>. Each
-        vector is run through every function here that promises the same
-        semantics &mdash; whole-input, lazy, and streamed with 1-byte and
-        3-byte chunks &mdash; and through <code>replace_all</code> and
-        <code>Stream.Replace</code> where the semantics are leftmost-longest.
-        Vectors containing the empty pattern, which <code>build</code>
-        rejects, and the leftmost-first tables are the only ones left out.
-      </p>
-
-      <h2 id="differential">The differential test</h2>
-
-      <p>
-        Vectors are still cases someone thought of. The
-        <a href="compatibility.html#differential">differential harness</a> in
-        <code>compat/</code> generates 20&nbsp;000 pattern-set, input and
-        chunking combinations from a fixed seed, runs them through this
-        library, the Rust crate, pyahocorasick and ahocorasick_rs, and
-        compares the outputs as strings: same pattern indices, same offsets,
-        same order. It is a CI job, and a change that makes this library
-        disagree with the Rust crate fails the build.
-      </p>
-
-      <h2 id="running">Running it yourself</h2>
-
+      <h1>Testing</h1>
+      <h2 id="oracle">Independent references</h2>
+      <p>QCheck compares overlapping search with a naive per-pattern scan,
+        including output order. A second reference tries each pattern at
+        each input position to check leftmost-longest selection and replacement.</p>
+      <p>Streaming modes are checked across random chunk splits. Cases include
+        empty chunks, empty pattern lists, mixed ASCII case, arbitrary bytes,
+        duplicates, and dense overlapping matches.</p>
+      <h2 id="examples">Regression cases</h2>
+      <p>Alcotest covers classic <code>ushers</code> matches, duplicate IDs,
+        empty patterns, accessors, binary data, tie-breaking, chunk boundaries,
+        state reuse, final flushes, and a large chunk of dense matches.</p>
+      <h2 id="conformance">Other implementations</h2>
+      <p>Conformance tests port published vectors from Rust
+        <code>aho-corasick</code>, daachorse, and pyahocorasick. A separate CI
+        job compares 20,000 generated cases with three pinned implementations
+        and runs a count-checked benchmark smoke test.</p>
+      <h2 id="running">Run locally</h2>
       <pre><code>opam install . --deps-only --with-test
-dune build @all
-dune runtest
-./compat/run.sh      # the differential test; needs cargo and pyahocorasick</code></pre>
-
-      <p>
-        That is what CI does, on <code>ubuntu-latest</code>, against OCaml
-        4.14 and 5.4, for every push to <code>main</code> and every pull
-        request: the 3500 generated property cases and the ported vectors run
-        in the ordinary test job, and the differential test in a job of its
-        own.
-      </p>
-
-      <h2 id="limits">What none of this covers</h2>
-
-      <p>
-        Stated plainly, because a page about correctness that only lists
-        strengths is marketing.
-      </p>
-
-      <dl>
-        <dt><strong>The differential test covers three other implementations</strong></dt>
-        <dd>
-          The Rust crate, pyahocorasick and ahocorasick_rs, and the last of
-          those is the Rust crate underneath. Nothing runs this library
-          against Hyperscan or the Go and Java implementations; the
-          <a href="compatibility.html#vectors">conformance vectors</a> and the
-          harness's <a href="https://github.com/thevilledev/ocaml-aho-corasick/blob/main/compat/README.md">case
-          format</a> are there so anyone can add one.
-        </dd>
-        <dt><strong>Leftmost-longest maximality is not asserted by the in-repository oracle</strong></dt>
-        <dd>
-          The property test checks that the selection is ordered,
-          non-overlapping and made of real matches. It does not assert that
-          each selected match is the longest one starting at that offset, nor
-          that no selectable match was skipped. Those follow from the
-          <a href="semantics.html#leftmost-longest">selection rule</a>; the
-          differential test checks them against the Rust crate's
-          leftmost-longest search, and the ported vectors check them by
-          example.
-        </dd>
-        <dt><strong>Ordering is not generated over by the in-repository oracle</strong></dt>
-        <dd>
-          The oracle normalises before comparing. Ordering rests on the
-          hand-written cases and on the differential test, which compares
-          order too.
-        </dd>
-        <dt><strong>Small adversarial pattern sets only</strong></dt>
-        <dd>
-          The generators produce small pattern sets. The
-          <a href="performance.html">benchmarks</a> exercise 15&nbsp;000-word
-          dictionaries and pathological overlap, but only for throughput and
-          match counts; nothing generates over large pattern sets, patterns
-          near the length of the input, or memory behaviour under load.
-        </dd>
-        <dt><strong>No fuzzing, no audit</strong></dt>
-        <dd>
-          There is no AFL or Crowbar target and no external review. This is a
-          small pure-OCaml library at 0.1.0.
-        </dd>
-        <dt><strong>Not constant-time</strong></dt>
-        <dd>
-          Scan time depends on the input and on how many matches it contains.
-          Do not use this to compare secrets.
-        </dd>
-      </dl>
-
-      <h2 id="reporting">If you find a disagreement</h2>
-
-      <p>
-        A pattern set, an input, what you got and what you expected is enough
-        to reproduce anything on this site &mdash; every claim here is a
-        function of those two inputs.
-        <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">Open
-        an issue</a>. A case that breaks the oracle is a bug; a case where
-        another implementation disagrees but the oracle does not is a
-        semantics difference, and belongs on the
-        <a href="compatibility.html">compatibility page</a>.
-      </p>
-
-      <p>
-        Back to <a href="semantics.html">the semantics</a>, or on to
-        <a href="api.html">the API</a>.
-      </p>
+opam exec -- dune runtest</code></pre>
+      <p>Replay a failing random seed with:</p>
+      <pre><code>QCHECK_SEED=12345 opam exec -- dune runtest --force</code></pre>
+      <p>CI covers OCaml 4.14 and 5.4, lower dependency bounds, package
+        installation, generated opam metadata, API documentation, website
+        links, and the <a href="compatibility.html#differential">differential harness</a>.</p>
+      <h2 id="limits">Scope</h2>
+      <p>These checks are not a formal proof. Cross-library results apply to
+        the pinned versions and generated cases; throughput depends on the
+        machine and workload.</p>
+      <h2 id="reporting">Report a bug</h2>
+      <p>Include the compiler version, patterns, input bytes, expected and
+        actual matches, and exact chunks for streaming failures.</p>
+      <p><a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">Open an issue</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/blob/main/test/test_aho_corasick.ml">Read the tests</a></p>
     </main>
-
     <footer>
-      <p>
-        <a href="https://github.com/thevilledev/ocaml-aho-corasick">github.com/thevilledev/ocaml-aho-corasick</a>
-        &middot; <a href="https://ville.dev/ocaml-aho-corasick/api/">API documentation</a>
-        &middot; <a href="https://github.com/thevilledev/ocaml-aho-corasick/issues">issues</a>
-      </p>
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick">Source</a> &middot;
+      <a href="api/aho-corasick/Aho_corasick/index.html">API reference</a> &middot;
+      <a href="https://github.com/thevilledev/ocaml-aho-corasick/blob/main/CHANGES.md">Changelog</a>
     </footer>
   </body>
 </html>

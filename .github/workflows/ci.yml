@@ -3,7 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -14,10 +19,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
-      - run: opam install . --deps-only --with-test
+      - run: opam install . --deps-only --with-test --with-doc
+      - run: opam lint --warnings=@1..999 aho-corasick.opam
+      - run: opam exec -- dune build @all @doc
+      - name: Check generated opam metadata
+        run: git diff --exit-code -- aho-corasick.opam
+      - run: opam exec -- dune runtest
+      - name: Build and install the package
+        run: |
+          opam exec -- dune build -p aho-corasick @install @runtest @doc
+          opam exec -- dune install --prefix "$RUNNER_TEMP/aho-install" aho-corasick
+      - name: Check documentation website
+        run: |
+          mkdir -p _site/api
+          cp -R website/. _site/
+          cp -R _build/default/_doc/_html/. _site/api/
+          python3 scripts/check_site.py _site
+
+  lower-bounds:
+    name: Lower bounds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "4.14.0"
+      - name: Install minimum dependencies
+        run: >-
+          opam install
+          .
+          --deps-only
+          --with-test
+          dune.3.17.2
+          alcotest.1.5.0
+          qcheck-core.0.25
+          qcheck-alcotest.0.25
       - run: opam exec -- dune build @all
       - run: opam exec -- dune runtest
 

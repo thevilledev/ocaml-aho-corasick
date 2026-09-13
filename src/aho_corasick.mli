@@ -2,9 +2,8 @@
 
     Build an automaton from a set of patterns once, then find every
     occurrence of every pattern in an input with a single left-to-right
-    pass: O(input + matches), independent of how many patterns there
-    are. This is the standard algorithm behind secret scanners, WAF and
-    IDS signature matching, log filtering and dictionary tagging.
+    pass. Search takes O(input length + matches examined); overlapping
+    searches also allocate their reported matches.
 
     Matching is byte-oriented and 8-bit clean: patterns and inputs are
     arbitrary [string]s (UTF-8 works as byte matching; [?ignore_case]
@@ -28,20 +27,22 @@ val build : ?ignore_case:bool -> string list -> t
     [~ignore_case:true], ASCII letters match case-insensitively.
     An empty pattern list yields an automaton that matches nothing.
 
-    @raise Invalid_argument if any pattern is the empty string. *)
+    Raises [Invalid_argument] if any pattern is the empty string. *)
 
 val pattern_count : t -> int
+(** Number of patterns, including duplicates. *)
 
 val pattern : t -> int -> string
 (** The original pattern for a {!match_}'s [pattern] index.
 
-    @raise Invalid_argument if the index is out of bounds. *)
+    Raises [Invalid_argument] if the index is out of bounds. *)
 
 (** {1 Searching} *)
 
 val find_all : t -> string -> match_ list
 (** Every match of every pattern, including overlapping ones. Ordered
-    by [stop]; matches ending at the same position come longest first. *)
+    by [stop]; matches ending at the same position come longest first,
+    then by ascending pattern index for equal lengths. *)
 
 val find_iter : t -> string -> match_ Seq.t
 (** Like {!find_all}, but lazily — stop consuming to stop scanning. *)
@@ -49,8 +50,9 @@ val find_iter : t -> string -> match_ Seq.t
 val find_leftmost_longest : t -> string -> match_ list
 (** Non-overlapping matches, chosen greedily: repeatedly take the match
     with the smallest [start] (breaking ties by greatest length), then
-    discard everything overlapping it. This is the "replace" semantics
-    of POSIX tools. *)
+    discard everything overlapping it. Equal-length ties use the lowest
+    pattern index. Selection is a single pass and retains at most one
+    candidate per start within the longest-pattern window. *)
 
 val mem : t -> string -> bool
 (** Does any pattern occur? Scans only as far as the first match. *)
@@ -64,13 +66,16 @@ val replace_all : t -> f:(match_ -> string) -> string -> string
     concatenating: matches spanning chunk boundaries are found, and
     offsets are absolute across everything fed so far.
 
-    Three semantics mirror the whole-input searches:
+    Always use the same automaton that created a state. Empty chunks are
+    allowed. Returned states are immutable; keep the new state to advance
+    the stream. Offsets must fit in an OCaml [int].
+
+    Three match modes are available:
 
     - {!val:Stream.feed} reports every match, overlapping included —
       {!find_all}, chunked.
     - {!val:Stream.feed_nonoverlapping} reports non-overlapping matches
-      with no buffering or latency, the semantics of Rust aho-corasick's
-      [stream_find_iter].
+      with earliest-end selection and no input buffering.
     - {!module:Stream.Leftmost_longest} and {!module:Stream.Replace}
       stream the {!find_leftmost_longest} / {!replace_all} selection,
       using lookahead bounded by the longest pattern. *)
@@ -92,8 +97,7 @@ module Stream : sig
       first: whenever one or more matches end, the longest of them is
       reported and scanning restarts immediately after it, so no later
       match overlaps it. Zero latency and nothing to flush, like
-      {!feed}. These are the semantics of Rust aho-corasick's
-      [stream_find_iter] ([MatchKind::Standard]): with patterns
+      {!feed}. Equal-length ties use the lowest pattern index. With patterns
       [["Samwise"; "Sam"]] and input ["Samwise"], the one match is
       [Sam].
 
@@ -116,9 +120,9 @@ module Stream : sig
       start, and the state buffers at most that window of candidates.
       Call {!Leftmost_longest.flush} at end of input for the rest.
 
-      (Rust's aho-corasick rejects leftmost match kinds on streams;
-      this module is how a stream is redacted or tokenized with POSIX
-      "replace" semantics without concatenating it first.) *)
+      The state retains at most one candidate per start in that window,
+      but no input bytes. [feed] does not materialise or sort all
+      overlapping matches. *)
   module Leftmost_longest : sig
     type state
 

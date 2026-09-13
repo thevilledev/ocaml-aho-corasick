@@ -1,0 +1,7 @@
+(install
+ (section doc)
+ (files
+  (usage.md as docs/usage.md)
+  (semantics.md as docs/semantics.md)
+  (development.md as docs/development.md)
+  (releasing.md as docs/releasing.md)))

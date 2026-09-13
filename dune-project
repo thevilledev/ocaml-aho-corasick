@@ -8,16 +8,17 @@
 (license MIT)
 (authors "Ville Vesilehto <ville@vesilehto.fi>")
 (maintainers "Ville Vesilehto <ville@vesilehto.fi>")
-(documentation "https://ville.dev/ocaml-aho-corasick/api/")
+(homepage "https://ville.dev/ocaml-aho-corasick/")
 
 (package
  (name aho-corasick)
  (synopsis "Aho-Corasick multi-pattern string matching")
  (description
-  "Simultaneous search for many patterns in one pass over the input. Builds the classic Aho-Corasick automaton (trie + failure links + dictionary suffix links) from a list of byte-string patterns, then finds every match (overlapping included), non-overlapping earliest-end matches, or leftmost-longest matches, over whole inputs or streamed across chunk boundaries with bounded lookahead — including streamed replacement — in time linear in input size and independent of pattern count. The workhorse behind secret scanners, WAF signature matching, log filtering and dictionary tagging. Pure OCaml, zero dependencies.")
+  "Multi-pattern matching over byte strings in pure OCaml, with no runtime dependencies beyond the standard library. Supports overlapping search, lazy iteration, leftmost-longest selection, replacement, ASCII case folding, and chunked streaming in three match modes. Automata are immutable and reusable. Search is linear in the input plus matches examined; leftmost-longest selection uses lookahead bounded by the longest pattern.")
  (depends
+  (dune (>= 3.17.2))
   (ocaml (>= 4.14))
-  (alcotest :with-test)
-  (qcheck-core :with-test)
-  (qcheck-alcotest :with-test))
- (tags (aho-corasick "string matching" "multi-pattern" scanning "org:thevilledev")))
+  (alcotest (and :with-test (>= 1.5.0)))
+  (qcheck-core (and :with-test (>= 0.25)))
+  (qcheck-alcotest (and :with-test (>= 0.25))))
+ (tags ("string" "search" "aho-corasick")))
