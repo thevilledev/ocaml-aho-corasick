@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Changelog](../CHANGES.md)
 
-The v0.1.0 files are prepared locally. Publication requires a pushed commit
+The v0.1.1 files are prepared locally. Publication requires a pushed commit
 and tag, a public source archive, and an opam-repository submission. Local
 preparation alone does not make `opam install aho-corasick` available.
 
@@ -28,10 +28,10 @@ These steps are for the maintainer when publication is approved. Use the
 same release commit that passed validation.
 
 ```sh
-git tag -s v0.1.0 -m 'Release v0.1.0'
+git tag -s v0.1.1 -m 'Release v0.1.1'
 mkdir -p _release
-git archive --format=tar --prefix=aho-corasick-0.1.0/ v0.1.0 \
-  | gzip -n > _release/aho-corasick-0.1.0.tar.gz
+git archive --format=tar --prefix=aho-corasick-0.1.1/ v0.1.1 \
+  | gzip -n > _release/aho-corasick-0.1.1.tar.gz
 ```
 
 Unpack the archive in a fresh directory and repeat the package build there.
@@ -44,7 +44,7 @@ over a forge-generated archive whose checksum might later change. Never
 replace an archive once opam-repository references it.
 
 Expected asset URL:
-`https://github.com/thevilledev/ocaml-aho-corasick/releases/download/v0.1.0/aho-corasick-0.1.0.tar.gz`.
+`https://github.com/thevilledev/ocaml-aho-corasick/releases/download/v0.1.1/aho-corasick-0.1.1.tar.gz`.
 Verify the public download against the local archive before submitting.
 
 ## Submit to opam-repository
@@ -58,11 +58,11 @@ checksums and prepare the repository submission:
 
 ```sh
 opam install opam-publish
-opam publish -v 0.1.0 \
-  https://github.com/thevilledev/ocaml-aho-corasick/releases/download/v0.1.0/aho-corasick-0.1.0.tar.gz .
+opam publish -v 0.1.1 \
+  https://github.com/thevilledev/ocaml-aho-corasick/releases/download/v0.1.1/aho-corasick-0.1.1.tar.gz .
 ```
 
-Review the generated `packages/aho-corasick/aho-corasick.0.1.0/opam`.
+Review the generated `packages/aho-corasick/aho-corasick.0.1.1/opam`.
 The repository copy should omit source-tree `name` and `version` fields
 and contain the immutable archive URL plus SHA-256 or stronger checksums.
 Keep OCaml/Dune constraints and test/doc dependency filters consistent with

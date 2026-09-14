@@ -1,6 +1,6 @@
-(lang dune 3.17)
+(lang dune 3.14)
 (name aho-corasick)
-(version 0.1.0)
+(version 0.1.1)
 
 (generate_opam_files true)
 
@@ -16,7 +16,6 @@
  (description
   "Multi-pattern matching over byte strings in pure OCaml, with no runtime dependencies beyond the standard library. Supports overlapping search, lazy iteration, leftmost-longest selection, replacement, ASCII case folding, and chunked streaming in three match modes. Automata are immutable and reusable. Search is linear in the input plus matches examined; leftmost-longest selection uses lookahead bounded by the longest pattern.")
  (depends
-  (dune (>= 3.17.2))
   (ocaml (>= 4.14))
   (alcotest (and :with-test (>= 1.5.0)))
   (qcheck-core (and :with-test (>= 0.25)))

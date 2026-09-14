@@ -4,7 +4,7 @@
 
 ## Build and test
 
-Use OCaml >= 4.14 and Dune >= 3.17.2 in an opam switch:
+Use OCaml >= 4.14 and Dune >= 3.14 in an opam switch:
 
 ```sh
 opam install . --deps-only --with-test --with-doc

@@ -57,9 +57,14 @@ jobs:
           opam-repositories: |
             default: https://opam.ocaml.org
           opam-disable-sandboxing: true
+      - name: Pin minimum Dune
+        run: >-
+          opam pin add dune.3.14.0
+          git+https://github.com/ocaml/dune.git#3.14.0
+          --no-action --yes
       - name: Install minimum dependencies
         run: |
-          opam install dune.3.17.2 alcotest.1.5.0 qcheck-core.0.25 qcheck-alcotest.0.25
+          opam install dune.3.14.0 alcotest.1.5.0 qcheck-core.0.25 qcheck-alcotest.0.25
           opam install . --deps-only --with-test
       - run: opam exec -- dune build @all
       - run: opam exec -- dune runtest

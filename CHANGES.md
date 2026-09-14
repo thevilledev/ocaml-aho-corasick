@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 (2026-09-14)
+
+### Changed
+
+- Lower the minimum supported Dune version from 3.17.2 to 3.14.0.
+
 ## 0.1.0 (2026-09-13)
 
 Initial release.

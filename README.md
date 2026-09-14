@@ -10,9 +10,9 @@ replacement, ASCII case folding, and streaming across chunk boundaries.
 
 ## Install
 
-Requires OCaml 4.14 or newer and Dune 3.17.2 or newer.
+Requires OCaml 4.14 or newer and Dune 3.14 or newer.
 
-Until v0.1.0 is published to opam, install from this checkout:
+Until v0.1.1 is published to opam, install from this checkout:
 
 ```sh
 opam install .
